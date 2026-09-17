@@ -2,16 +2,30 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getDesktop, isDesktopApp } from "@/lib/desktop";
+import { getDesktop, isDesktopApp, isMacDesktopApp } from "@/lib/desktop";
 
 /** Listens for tray / shortcut navigation events from Electron. */
 export function DesktopBridge() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!isDesktopApp()) return;
+    const mac = isMacDesktopApp();
+    if (mac) {
+      document.documentElement.dataset.desktop = "mac";
+      document.title = "CueAI";
+    }
+
+    if (!isDesktopApp()) {
+      if (mac) return;
+      return;
+    }
     const desktop = getDesktop();
     if (!desktop) return;
+
+    if (!mac) {
+      document.documentElement.dataset.desktop = "win";
+    }
+    document.title = "CueAI";
 
     const offNav = desktop.onNavigate((path) => {
       router.push(path);
@@ -19,15 +33,12 @@ export function DesktopBridge() {
 
     const offShortcut = desktop.onShortcut((name) => {
       if (name === "command-palette") {
-        // Existing topbar search is the command surface for MVP
         document.querySelector<HTMLButtonElement>("[data-command-trigger]")?.click();
       }
       if (name === "end-session") {
         window.dispatchEvent(new CustomEvent("cueai:end-session"));
       }
     });
-
-    document.documentElement.dataset.desktop = "true";
 
     return () => {
       offNav();

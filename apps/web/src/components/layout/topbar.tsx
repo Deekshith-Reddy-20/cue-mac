@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { toggleCompanionOverlay } from "@/lib/desktop";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 
 const INITIAL_NOTIFS = [
   { id: "n1", text: "Welcome to CueAI — your workspace is ready", href: "/dashboard" },
@@ -51,14 +52,18 @@ export function Topbar() {
   const [readIds, setReadIds] = useState<string[]>([]);
   // Avoid SSR/client mismatch: cueDesktop / bridge only exist after mount.
   const [desktopReady, setDesktopReady] = useState(false);
+  const [macDesktop, setMacDesktop] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { isDesktopAvailable } = await import("@/lib/desktop");
+      const { isDesktopAvailable, isMacDesktopApp } = await import("@/lib/desktop");
       const ok = await isDesktopAvailable();
-      if (!cancelled) setDesktopReady(ok);
+      if (!cancelled) {
+        setDesktopReady(ok);
+        setMacDesktop(isMacDesktopApp());
+      }
     })();
     return () => {
       cancelled = true;
@@ -105,8 +110,12 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--background)]/80 px-4 backdrop-blur-xl sm:px-6">
-      <div className="relative hidden md:block">
+    <header
+      className={cn(
+        "mac-toolbar sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--background)]/80 px-4 backdrop-blur-xl sm:px-6"
+      )}
+    >
+      <div className="relative hidden md:block not-mac">
         <button
           type="button"
           onClick={() => {
@@ -161,7 +170,7 @@ export function Topbar() {
           setCommandOpen(true);
           setCommandQuery("");
         }}
-        className="group flex h-9 max-w-md flex-1 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-3 text-sm text-subtle transition hover:border-[var(--border-strong)]"
+        className="mac-toolbar-search group flex h-9 max-w-md flex-1 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-3 text-sm text-subtle transition hover:border-[var(--border-strong)]"
       >
         <Search className="h-4 w-4" />
         <span className="flex-1 text-left">Search meetings, docs, answers…</span>
@@ -178,8 +187,17 @@ export function Topbar() {
           onClick={handleStartMeeting}
         >
           <Plus className="h-3.5 w-3.5" />
-          Start Meeting
+          <span className="mac-only">New Meeting</span>
+          <span className="not-mac">Start Meeting</span>
         </Button>
+
+        <button
+          type="button"
+          className="mac-only mac-hud-btn"
+          onClick={() => void handleCompanion()}
+        >
+          HUD
+        </button>
 
         <button
           onClick={toggleTheme}
@@ -315,65 +333,71 @@ export function Topbar() {
         </div>
       </div>
 
-      {commandOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-[15vh]"
-          onClick={() => setCommandOpen(false)}
-        >
+      {commandOpen &&
+        createPortal(
           <div
-            className="w-full max-w-lg overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] shadow-[var(--shadow-lg)]"
-            onClick={(e) => e.stopPropagation()}
+            className={macDesktop ? "mac-spotlight" : "fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-[15vh]"}
+            onClick={() => setCommandOpen(false)}
           >
-            <div className="flex items-center gap-2 border-b border-[var(--border)] px-3">
-              <Search className="h-4 w-4 text-subtle" />
-              <input
-                ref={commandInputRef}
-                value={commandQuery}
-                onChange={(e) => setCommandQuery(e.target.value)}
-                placeholder="Jump to…"
-                className="h-12 flex-1 bg-transparent text-sm outline-none"
-              />
-              <kbd className="rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-subtle">
-                Esc
-              </kbd>
+            <div
+              className={
+                macDesktop
+                  ? "mac-spotlight-card"
+                  : "w-full max-w-lg overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] shadow-[var(--shadow-lg)]"
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3">
+                <Search className="h-4 w-4 text-subtle" />
+                <input
+                  ref={commandInputRef}
+                  value={commandQuery}
+                  onChange={(e) => setCommandQuery(e.target.value)}
+                  placeholder="Jump to…"
+                  className={macDesktop ? "" : "h-12 flex-1 bg-transparent text-sm outline-none"}
+                />
+                <kbd className="rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-subtle">
+                  Esc
+                </kbd>
+              </div>
+              <div className="max-h-72 overflow-y-auto p-2">
+                {filteredCommands.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-sm text-muted">No matches</p>
+                ) : (
+                  filteredCommands.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.href}
+                        type="button"
+                        className={macDesktop ? "mac-spotlight-row" : "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"}
+                        onClick={() => {
+                          setCommandOpen(false);
+                          router.push(item.href);
+                        }}
+                      >
+                        <Icon className="h-4 w-4 text-subtle" />
+                        {item.label}
+                      </button>
+                    );
+                  })
+                )}
+                <button
+                  type="button"
+                  className={macDesktop ? "mac-spotlight-row" : "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"}
+                  onClick={() => {
+                    setCommandOpen(false);
+                    void handleCompanion();
+                  }}
+                >
+                  <Command className="h-4 w-4 text-subtle" />
+                  {desktopReady ? "Toggle meeting HUD" : "Open companion (Desktop if available)"}
+                </button>
+              </div>
             </div>
-            <div className="max-h-72 overflow-y-auto p-2">
-              {filteredCommands.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-muted">No matches</p>
-              ) : (
-                filteredCommands.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.href}
-                      type="button"
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"
-                      onClick={() => {
-                        setCommandOpen(false);
-                        router.push(item.href);
-                      }}
-                    >
-                      <Icon className="h-4 w-4 text-subtle" />
-                      {item.label}
-                    </button>
-                  );
-                })
-              )}
-              <button
-                type="button"
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"
-                onClick={() => {
-                  setCommandOpen(false);
-                  void handleCompanion();
-                }}
-              >
-                <Command className="h-4 w-4 text-subtle" />
-                {desktopReady ? "Toggle Desktop companion" : "Open companion (Desktop if available)"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </header>
   );
 }

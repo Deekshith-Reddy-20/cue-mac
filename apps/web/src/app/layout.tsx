@@ -6,6 +6,7 @@ import { AuthProvider } from "@/components/providers/auth-provider";
 import { DesktopTitleBar } from "@/components/desktop/title-bar";
 import { DesktopBridge } from "@/components/desktop/desktop-bridge";
 import "./globals.css";
+import "./mac-desktop.css";
 
 const outfit = Outfit({
   variable: "--font-sans",
@@ -49,6 +50,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col font-sans">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(new URLSearchParams(location.search).get("desktop")==="mac"||(window.cueDesktop&&window.cueDesktop.isMac)){document.documentElement.dataset.desktop="mac";document.title="CueAI"}}catch(e){}`,
+          }}
+        />
         <ThemeProvider>
           <AuthSessionProvider>
             <AuthProvider>

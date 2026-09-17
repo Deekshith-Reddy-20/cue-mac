@@ -35,6 +35,7 @@ export type ScreenshotResult = {
 
 export type CueDesktopAPI = {
   isDesktop: true;
+  isMac?: boolean;
   minimize: () => Promise<void>;
   maximize: () => Promise<boolean>;
   close: () => Promise<void>;
@@ -86,6 +87,12 @@ export type CompanionOpenResult = {
 
 export function isDesktopApp() {
   return typeof window !== "undefined" && Boolean(window.cueDesktop?.isDesktop);
+}
+
+export function isMacDesktopApp() {
+  if (typeof window === "undefined") return false;
+  if (window.cueDesktop?.isMac) return true;
+  return new URLSearchParams(window.location.search).get("desktop") === "mac";
 }
 
 export function getDesktop() {

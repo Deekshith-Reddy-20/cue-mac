@@ -3,25 +3,54 @@
 import { useEffect, useState } from "react";
 import { Minus, Square, Copy, X } from "lucide-react";
 import { BrandMark } from "@/components/ui/logo";
-import { getDesktop, isDesktopApp } from "@/lib/desktop";
+import { getDesktop, isDesktopApp, isMacDesktopApp } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 
 /** Frameless window chrome — only rendered inside Electron. */
 export function DesktopTitleBar() {
   const [visible, setVisible] = useState(false);
+  const [mac, setMac] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const [nativeLights, setNativeLights] = useState(false);
 
   useEffect(() => {
-    setVisible(isDesktopApp());
+    const macApp = isMacDesktopApp();
+    setMac(macApp);
+    setVisible(isDesktopApp() || macApp);
     const desktop = getDesktop();
     if (!desktop) return;
     void desktop.isMaximized().then(setMaximized);
+    void desktop.getStatus?.().then((status) => {
+      setNativeLights(status.platform === "darwin");
+    });
     return desktop.onMaximizedChange(setMaximized);
   }, []);
 
   if (!visible) return null;
 
   const desktop = getDesktop();
+
+  if (mac) {
+    return (
+      <header
+        className="mac-titlebar"
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+      >
+        <div
+          className={cn("mac-titlebar-lights", nativeLights && "is-native")}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+          {!nativeLights && (
+            <>
+              <button type="button" className="mac-tl close" aria-label="Close" onClick={() => void desktop?.close()} />
+              <button type="button" className="mac-tl min" aria-label="Minimize" onClick={() => void desktop?.minimize()} />
+              <button type="button" className="mac-tl zoom" aria-label="Zoom" onClick={() => void desktop?.maximize()} />
+            </>
+          )}
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header

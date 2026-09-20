@@ -25,6 +25,25 @@ export type ScreenshotResult = {
   dataUrl?: string;
   savedPath?: string | null;
   error?: string;
+  displayId?: number;
+};
+
+export type MacPermissionState =
+  | "granted"
+  | "denied"
+  | "not-determined"
+  | "restricted"
+  | "unknown";
+
+export type MacPermissionStatus = {
+  state: MacPermissionState;
+  message: string;
+};
+
+export type MacPermissionsSnapshot = {
+  microphone: MacPermissionStatus;
+  screenRecording: MacPermissionStatus;
+  systemAudio: MacPermissionStatus;
 };
 
 export type CompanionWindowState = {
@@ -49,7 +68,14 @@ export type CompanionAPI = {
   setListenSources: (sources: Partial<ListenSources>) => Promise<ListenSources>;
   getDesktopAudioSourceId: () => Promise<string | null>;
   getWebOrigin: () => Promise<string>;
-  captureScreenshot: (opts?: { save?: boolean }) => Promise<ScreenshotResult>;
+  captureScreenshot: (opts?: { save?: boolean; displayId?: number }) => Promise<ScreenshotResult>;
+  getPermissions?: () => Promise<MacPermissionsSnapshot>;
+  requestPermission?: (
+    kind: "microphone" | "screen" | "systemAudio"
+  ) => Promise<MacPermissionStatus>;
+  openPrivacySettings?: (
+    pane?: "microphone" | "screen" | "systemAudio" | "privacy"
+  ) => Promise<boolean>;
   expand: () => Promise<boolean>;
   restore: () => Promise<boolean>;
   resetSize: () => Promise<boolean>;

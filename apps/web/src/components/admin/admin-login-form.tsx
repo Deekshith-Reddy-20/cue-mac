@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SocialAuthButtons } from "@/components/auth/social-auth-buttons";
 import {
-  ADMIN_BOOTSTRAP,
   loginAdmin,
   type AdminSession,
 } from "@/lib/admin-auth";
@@ -59,7 +58,7 @@ export function AdminLoginForm({
           </p>
         </div>
         <p className="relative z-10 text-xs text-subtle">
-          Default bootstrap: {ADMIN_BOOTSTRAP.email} / {ADMIN_BOOTSTRAP.password}
+          Workspace administration for authenticated Admin and Manager accounts.
         </p>
       </div>
 
@@ -93,7 +92,6 @@ export function AdminLoginForm({
                 name="email"
                 placeholder="admin@company.com"
                 autoComplete="username"
-                defaultValue={ADMIN_BOOTSTRAP.email}
                 leftIcon={<Mail className="h-4 w-4" />}
                 required
               />

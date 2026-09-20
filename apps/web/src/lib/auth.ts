@@ -19,6 +19,7 @@ export type CueSession = {
   name: string;
   email: string;
   workspace: string;
+  workspaceId?: string;
   role?: WorkspaceRole;
   /** False until the post-signup questionnaire is submitted or skipped. */
   onboardingCompleted?: boolean;
@@ -29,6 +30,7 @@ type ApiUser = {
   name: string;
   email: string;
   workspace: string;
+  workspaceId?: string;
   role?: WorkspaceRole;
   onboardingCompleted?: boolean;
 };
@@ -118,6 +120,7 @@ function sessionFromApiUser(user: ApiUser): CueSession {
     name: user.name,
     email: user.email,
     workspace: user.workspace,
+    workspaceId: user.workspaceId,
     role: normalizeRole(user.role),
     onboardingCompleted: Boolean(user.onboardingCompleted),
   });
@@ -139,6 +142,7 @@ export async function loginWithEmailApi(input: {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(input),
     });
     const data = (await res.json().catch(() => ({}))) as {
@@ -163,6 +167,7 @@ export async function signupWithEmailApi(input: {
     const res = await fetch("/api/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(input),
     });
     const data = (await res.json().catch(() => ({}))) as {
@@ -180,7 +185,7 @@ export async function signupWithEmailApi(input: {
 
 export async function logoutApi() {
   try {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
   } catch {
     // ignore
   }
@@ -189,7 +194,7 @@ export async function logoutApi() {
 
 export async function syncSessionFromServer(): Promise<CueSession | null> {
   try {
-    const res = await fetch("/api/auth/me", { cache: "no-store" });
+    const res = await fetch("/api/auth/me", { cache: "no-store", credentials: "include" });
     if (!res.ok) {
       if (!AUTH_BYPASS && (res.status === 401 || res.status === 403)) {
         clearSession();

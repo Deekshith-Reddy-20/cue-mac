@@ -55,8 +55,8 @@ export async function POST(req: Request) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return NextResponse.json({ error: "Enter a valid email." }, { status: 400 });
   }
-  if (password.length < 6) {
-    return NextResponse.json({ error: "Password must be at least 6 characters." }, { status: 400 });
+  if (password.length < 8) {
+    return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
   }
 
   const store = await readStore();
@@ -118,10 +118,6 @@ export async function POST(req: Request) {
     if (role === "Admin") {
       s.workspace.name = workspaceName;
       workspaceLabel = workspaceName;
-      const bootstrap = s.users.find((u) => u.email === "admin@cueai.local");
-      if (bootstrap && bootstrap.name === "Workspace Admin") {
-        bootstrap.status = "Deactivated";
-      }
     }
 
     s.users.push({

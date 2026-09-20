@@ -1,31 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: light dark;
-  --hud-ink: #1d1d1f;
-  --hud-muted: rgba(29, 29, 31, 0.55);
-  --hud-fill: rgba(246, 246, 248, 0.78);
-  --hud-field: rgba(255, 255, 255, 0.72);
-  --hud-chip: rgba(0, 0, 0, 0.05);
-  --hud-line: rgba(0, 0, 0, 0.08);
-  --hud-accent: #0071e3;
+  color-scheme: dark;
+  --hud-ink: #f5f5f7;
+  --hud-muted: rgba(245, 245, 247, 0.58);
+  --hud-fill: rgba(14, 14, 16, 0.72);
+  --hud-field: rgba(28, 28, 30, 0.78);
+  --hud-chip: rgba(255, 255, 255, 0.08);
+  --hud-line: rgba(255, 255, 255, 0.1);
+  --hud-accent: #0099ff;
   --hud-ok: #30d158;
   --hud-warn: #ff9f0a;
   --hud-danger: #ff3b30;
-  --hud-menu: rgba(246, 246, 246, 0.94);
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not(.mac-preview) {
-    --hud-ink: #f5f5f7;
-    --hud-muted: rgba(245, 245, 247, 0.55);
-    --hud-fill: rgba(28, 28, 30, 0.78);
-    --hud-field: rgba(58, 58, 60, 0.72);
-    --hud-chip: rgba(255, 255, 255, 0.08);
-    --hud-line: rgba(255, 255, 255, 0.1);
-    --hud-accent: #0a84ff;
-    --hud-menu: rgba(36, 36, 38, 0.94);
-  }
+  --hud-menu: rgba(22, 22, 24, 0.94);
 }
 
 html,
@@ -118,10 +105,10 @@ button {
   overflow: visible;
   border-radius: 20px;
   background: var(--hud-fill);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow:
-    0 20px 50px rgba(0, 0, 0, 0.2),
-    0 1px 0 rgba(255, 255, 255, 0.55) inset;
+    0 18px 48px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 255, 255, 0.08) inset;
   backdrop-filter: saturate(180%) blur(40px);
   -webkit-backdrop-filter: saturate(180%) blur(40px);
   animation: cue-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -227,8 +214,8 @@ button {
   padding: 6px;
   border-radius: 12px;
   background: var(--hud-menu);
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   animation: cue-menu 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -294,7 +281,7 @@ button {
   padding: 0 6px 0 12px;
   border-radius: 12px;
   background: var(--hud-field);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
 }
 
 .cue-search-icon {

@@ -10,14 +10,14 @@ CueAI for Mac cannot be packaged on ${process.platform}.
 electron-builder only builds .dmg / .app on macOS:
 https://www.electron.build/multi-platform-build
 
-On this Windows machine, run the Mac HUD in dev instead:
+On this Windows machine, run CueAI for Mac in dev instead:
 
   npm run dev:web
-  npm run dev:desktop:mac
+  npm run dev:mac
 
 Package the installer on a Mac (or GitHub Actions macos-latest):
 
-  npm run dist:desktop:mac
+  npm run dist:mac
 `);
   process.exit(1);
 }

@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { getMeetingById } from "@/lib/meetings-catalog";
-import { finalizeMeeting, getMeeting, publicMeeting } from "@/lib/server/meetings";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/server/api-auth";
+import { finalizeMeeting, getMeetingForUser, publicMeeting } from "@/lib/server/meetings";
 import type { DbMeetingLine } from "@/lib/server/db";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -13,30 +13,31 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { error, session } = await requireAuth(req);
+  if (error || !session) return error;
+
   const { id } = await ctx.params;
-  const stored = await getMeeting(id);
-  if (stored) {
+  const stored = await getMeetingForUser(id, session.userId);
+  if (!stored) {
     return NextResponse.json(
-      { meeting: publicMeeting(stored, true) },
-      { headers: CORS_HEADERS },
+      { error: "Meeting not found" },
+      { status: 404, headers: CORS_HEADERS },
     );
   }
 
-  const catalog = getMeetingById(id);
-  if (catalog) {
-    return NextResponse.json({ meeting: catalog }, { headers: CORS_HEADERS });
-  }
-
   return NextResponse.json(
-    { error: "Meeting not found" },
-    { status: 404, headers: CORS_HEADERS },
+    { meeting: publicMeeting(stored, true) },
+    { headers: CORS_HEADERS },
   );
 }
 
-export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { error, session } = await requireAuth(req);
+  if (error || !session) return error;
+
   const { id } = await ctx.params;
-  const meeting = await getMeeting(id);
+  const meeting = await getMeetingForUser(id, session.userId);
   if (!meeting) {
     return NextResponse.json(
       { error: "Meeting not found." },
@@ -56,7 +57,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
   }
 
-  const fresh = await getMeeting(id);
+  const fresh = await getMeetingForUser(id, session.userId);
   return NextResponse.json(
     { meeting: fresh ? publicMeeting(fresh, true) : null },
     { headers: CORS_HEADERS },

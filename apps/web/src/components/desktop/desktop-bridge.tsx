@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getDesktop, isDesktopApp, isMacDesktopApp } from "@/lib/desktop";
+import { persistDesktopQuery, withDesktopParam } from "@/lib/desktop-query";
 
 /** Listens for tray / shortcut navigation events from Electron. */
 export function DesktopBridge() {
@@ -13,6 +14,7 @@ export function DesktopBridge() {
     if (mac) {
       document.documentElement.dataset.desktop = "mac";
       document.title = "CueAI";
+      persistDesktopQuery();
     }
 
     if (!isDesktopApp()) {
@@ -28,7 +30,7 @@ export function DesktopBridge() {
     document.title = "CueAI";
 
     const offNav = desktop.onNavigate((path) => {
-      router.push(path);
+      router.push(withDesktopParam(path));
     });
 
     const offShortcut = desktop.onShortcut((name) => {

@@ -14,6 +14,7 @@ import {
   Database,
   FilePenLine,
   KeyRound,
+  Laptop,
   Lock,
   Mail,
   Plus,
@@ -35,6 +36,7 @@ import {
   YAxis,
 } from "recharts";
 import { RequireAdmin } from "@/components/auth/require-admin";
+import { AdminDevicesPanel } from "@/components/admin/admin-devices-panel";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +67,7 @@ type NavId =
   | "privacy"
   | "retention"
   | "audit"
+  | "devices"
   | "settings";
 
 const NAV: Array<{
@@ -87,6 +90,7 @@ const NAV: Array<{
   { id: "privacy", label: "Privacy", icon: Lock, permission: "privacy.read" },
   { id: "retention", label: "Retention", icon: Database, permission: "privacy.read" },
   { id: "audit", label: "Activity Log", icon: ScrollText, permission: "audit.read" },
+  { id: "devices", label: "Mac devices", icon: Laptop, permission: "devices.read" },
   { id: "settings", label: "Settings", icon: Settings, permission: "workspace.read" },
 ];
 
@@ -1896,6 +1900,8 @@ function AdminPortalInner() {
                 )}
               </Card>
             )}
+
+            {tab === "devices" && <AdminDevicesPanel />}
 
             {tab === "settings" && (
               <Card className="p-5">

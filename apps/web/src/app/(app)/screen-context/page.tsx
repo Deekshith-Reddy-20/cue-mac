@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Eye,
   EyeOff,
@@ -12,31 +12,56 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
-
-const apps = ["Slack", "Notion", "1Password", "Banking"];
+import { getDesktop, isMacDesktopApp, type MacDisplayInfo } from "@/lib/desktop";
 
 export default function ScreenContextPage() {
   const [enabled, setEnabled] = useState(false);
   const [privacy, setPrivacy] = useState(true);
-  const [excluded, setExcluded] = useState<string[]>(["1Password", "Banking"]);
   const [showPermission, setShowPermission] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [displays, setDisplays] = useState<MacDisplayInfo[]>([]);
+  const [displayId, setDisplayId] = useState<number | null>(null);
+  const [permMsg, setPermMsg] = useState<string | null>(null);
+  const mac = isMacDesktopApp();
+
+  useEffect(() => {
+    const desktop = getDesktop();
+    if (!desktop?.listDisplays) return;
+    void desktop.listDisplays().then((list) => {
+      setDisplays(list);
+      setDisplayId(list.find((d) => d.primary)?.id ?? list[0]?.id ?? null);
+    });
+    void desktop.getPermissions?.().then((perms) => {
+      setPermMsg(perms.screenRecording.message);
+    });
+  }, []);
 
   async function captureAndAnalyze() {
     if (!enabled) return;
     setBusy(true);
+    setAnalysis(null);
     try {
-      const desktop = (
-        window as Window & {
-          cueDesktop?: { captureScreenshot?: (o?: { save?: boolean }) => Promise<{ dataUrl?: string }> };
-        }
-      ).cueDesktop;
+      const desktop = getDesktop();
       let dataUrl: string | undefined;
       if (desktop?.captureScreenshot) {
-        const shot = await desktop.captureScreenshot({ save: false });
+        if (mac && desktop.requestPermission) {
+          const permission = await desktop.requestPermission("screen");
+          setPermMsg(permission.message);
+          if (permission.state === "denied" || permission.state === "restricted") {
+            setAnalysis(permission.message);
+            return;
+          }
+        }
+        const shot = await desktop.captureScreenshot({
+          save: false,
+          displayId: displayId ?? undefined,
+        });
+        if (!shot.ok) {
+          setAnalysis(shot.error || "Could not capture the selected display.");
+          return;
+        }
         dataUrl = shot.dataUrl;
       } else {
         const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -56,16 +81,27 @@ export default function ScreenContextPage() {
         stream.getTracks().forEach((t) => t.stop());
         video.srcObject = null;
       }
-      if (dataUrl) {
-        setPreviewUrl(dataUrl);
-        setAnalysis(
-          privacy
-            ? "Screen captured privately. Detected UI text regions (redacted). Toggle Privacy off for full OCR preview."
-            : "Screen captured. Likely context: design / docs / meeting window. Use Knowledge Base uploads for deeper grounding."
-        );
-      } else {
-        setAnalysis("Could not capture a frame. Allow screen share permission and try again.");
+      if (!dataUrl) {
+        setAnalysis("Could not capture a frame. Allow Screen Recording and try again.");
+        return;
       }
+      setPreviewUrl(privacy ? null : dataUrl);
+      const res = await fetch("/api/live/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt:
+            "What is happening on this screen? Describe it briefly, then give a first-person interview-ready answer if there is a question or prompt.",
+          image: dataUrl,
+          mode: "screen",
+        }),
+      });
+      const data = (await res.json()) as { answer?: string; error?: string };
+      if (!res.ok) {
+        setAnalysis(data.error || "Vision AI could not read this capture.");
+        return;
+      }
+      setAnalysis(data.answer || "No answer returned.");
     } catch (err) {
       setAnalysis(err instanceof Error ? err.message : "Screen capture cancelled.");
     } finally {
@@ -141,33 +177,27 @@ export default function ScreenContextPage() {
             </div>
             <div className="flex items-center gap-2">
               <Badge variant={enabled ? "success" : "default"}>
-                {enabled ? "Capturing" : "Idle"}
+                {busy ? "Analyzing" : enabled ? "Ready" : "Idle"}
               </Badge>
               <Badge variant="info">
                 <ScanText className="h-3 w-3" />
-                OCR {enabled ? "active" : "off"}
+                {busy ? "Analyzing screen..." : analysis ? "Screen analyzed" : enabled ? "OCR ready" : "OCR off"}
               </Badge>
             </div>
           </div>
           <div
-            className={cn(
-              "relative flex aspect-video items-center justify-center bg-[var(--background)]",
-              !enabled && "opacity-60"
-            )}
+            className="relative flex aspect-video items-center justify-center bg-[var(--background-secondary,var(--background))]"
           >
-            <div className="absolute inset-4 rounded-xl border border-dashed border-[var(--border-strong)] bg-gradient-to-br from-teal-500/10 via-transparent to-violet-500/10">
-              <div className="absolute left-4 top-4 h-3 w-32 rounded bg-white/10" />
-              <div className="absolute left-4 top-10 h-2 w-48 rounded bg-white/5" />
-              <div className="absolute bottom-4 left-4 right-4 h-20 rounded-lg border border-white/10 bg-white/5" />
-              {enabled && (
-                <div className="absolute right-4 top-4 rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-[10px] text-teal-300">
-                  Context detected · Figma · Design Specs
-                </div>
-              )}
-            </div>
-            {!enabled && (
-              <p className="relative z-10 text-sm text-muted">
-                Enable Screen AI to preview context
+            {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={previewUrl} alt="Screen capture preview" className="h-full w-full object-cover object-top" />
+            ) : (
+              <p className="relative z-10 px-6 text-center text-sm text-muted">
+                {!enabled
+                  ? "Enable Screen AI to preview context"
+                  : busy
+                    ? "Analyzing screen..."
+                    : "Screen preview"}
               </p>
             )}
           </div>
@@ -210,56 +240,59 @@ export default function ScreenContextPage() {
                   className="max-h-40 w-full rounded-lg object-cover object-top"
                 />
               )}
-              {analysis && <p className="text-xs text-muted">{analysis}</p>}
+              {analysis && (
+                <p className="text-sm text-foreground">
+                  {/unable|could not|denied|error|fail/i.test(analysis) ? `Unable to analyze screen. ${analysis}` : analysis}
+                </p>
+              )}
             </div>
           )}
         </Card>
 
         <div className="space-y-4">
           <Card className="p-5">
-            <CardTitle className="mb-3">Monitor selection</CardTitle>
+            <CardTitle className="mb-3">Display selection</CardTitle>
             <div className="space-y-2">
-              {["Built-in Display", "DELL U2720Q"].map((m, i) => (
+              {(displays.length ? displays : [{ id: 0, label: "Primary display", primary: true, scaleFactor: 1, internal: true, bounds: { x: 0, y: 0, width: 0, height: 0 } }]).map((display) => (
                 <label
-                  key={m}
+                  key={display.id}
                   className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] px-3 py-2.5 text-sm hover:bg-[var(--surface-hover)]"
                 >
-                  <input type="radio" name="monitor" defaultChecked={i === 0} />
-                  {m}
+                  <input
+                    type="radio"
+                    name="monitor"
+                    checked={displayId === display.id || (displayId == null && display.primary)}
+                    onChange={() => setDisplayId(display.id)}
+                  />
+                  <span>
+                    {display.label}
+                    {display.primary ? " · Primary" : ""}
+                    {display.scaleFactor > 1 ? ` · ${display.scaleFactor}x` : ""}
+                  </span>
                 </label>
               ))}
             </div>
+            {permMsg && <p className="mt-3 text-xs text-muted">{permMsg}</p>}
+            {mac && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-3"
+                onClick={() => void getDesktop()?.openPrivacySettings?.("screen")}
+              >
+                Open System Settings
+              </Button>
+            )}
           </Card>
 
           <Card className="p-5">
-            <CardTitle className="mb-3">Excluded apps</CardTitle>
-            <p className="mb-3 text-xs text-subtle">
-              These apps will never be captured.
+            <CardTitle className="mb-3">Capture notes</CardTitle>
+            <p className="text-xs leading-relaxed text-muted">
+              CueAI captures the selected physical display, hides CueAI windows for the
+              shot, and sends that image to the existing vision pipeline. The overlay is
+              excluded where macOS content protection allows. Some ScreenCaptureKit paths
+              may still see protected windows.
             </p>
-            <div className="space-y-2">
-              {apps.map((app) => {
-                const on = excluded.includes(app);
-                return (
-                  <button
-                    key={app}
-                    onClick={() =>
-                      setExcluded((prev) =>
-                        on ? prev.filter((a) => a !== app) : [...prev, app]
-                      )
-                    }
-                    className={cn(
-                      "flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-sm transition",
-                      on
-                        ? "border-red-500/30 bg-red-500/10 text-red-300"
-                        : "border-[var(--border)] text-muted hover:text-foreground"
-                    )}
-                  >
-                    {app}
-                    <span className="text-xs">{on ? "Excluded" : "Allowed"}</span>
-                  </button>
-                );
-              })}
-            </div>
           </Card>
         </div>
       </div>

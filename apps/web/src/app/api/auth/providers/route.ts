@@ -22,5 +22,8 @@ export async function GET() {
     github:
       isRealSecret(process.env.AUTH_GITHUB_ID) &&
       isRealSecret(process.env.AUTH_GITHUB_SECRET),
+    apple:
+      isRealSecret(process.env.AUTH_APPLE_ID) &&
+      isRealSecret(process.env.AUTH_APPLE_SECRET),
   });
 }

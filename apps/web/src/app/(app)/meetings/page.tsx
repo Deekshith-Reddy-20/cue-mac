@@ -7,13 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { openCompanionOverlay } from "@/lib/desktop";
 import {
   formatDuration,
   formatMeetingWhen,
   type StoredMeeting,
 } from "@/lib/meetings-client";
 import { cn } from "@/lib/utils";
+import { MacGlassButton, MacSegmentedControl } from "@/components/mac";
+import { isMacDesktopApp } from "@/lib/desktop";
 
 type StatusFilter = "all" | "live" | "summary";
 
@@ -23,16 +24,30 @@ export default function MeetingsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [meetings, setMeetings] = useState<StoredMeeting[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mac, setMac] = useState(false);
+
+  useEffect(() => {
+    setMac(isMacDesktopApp());
+  }, []);
 
   useEffect(() => {
     let active = true;
     void fetch("/api/meetings", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data: { meetings?: StoredMeeting[] }) => {
-        if (active) setMeetings(data.meetings || []);
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Unable to load meetings.");
+        return r.json() as Promise<{ meetings?: StoredMeeting[] }>;
+      })
+      .then((data) => {
+        if (!active) return;
+        setMeetings(data.meetings || []);
+        setLoadError(null);
       })
       .catch(() => {
-        if (active) setMeetings([]);
+        if (active) {
+          setMeetings([]);
+          setLoadError("Unable to load meetings.");
+        }
       })
       .finally(() => {
         if (active) setLoaded(true);
@@ -45,15 +60,13 @@ export default function MeetingsPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return meetings.filter((m) => {
+      if (m.status === "live") return false;
       const matchesQuery =
         !q ||
         m.title.toLowerCase().includes(q) ||
         m.tags.some((t) => t.toLowerCase().includes(q)) ||
         (m.company || "").toLowerCase().includes(q);
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "live" && m.status === "live") ||
-        (statusFilter === "summary" && m.status !== "live");
+      const matchesStatus = statusFilter === "all" || statusFilter === "summary";
       return matchesQuery && matchesStatus;
     });
   }, [meetings, query, statusFilter]);
@@ -66,14 +79,20 @@ export default function MeetingsPage() {
             Meetings
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Live sessions, recordings, and AI summaries in one place.
+            Completed sessions only. A live meeting appears here after you end it and the summary is saved.
           </p>
         </div>
         <Link href="/meetings/live">
-          <Button variant="gradient">
-            <Video className="h-4 w-4" />
-            New live session
-          </Button>
+          {mac ? (
+            <MacGlassButton accent icon={<Video className="h-4 w-4" />}>
+              New live session
+            </MacGlassButton>
+          ) : (
+            <Button variant="gradient">
+              <Video className="h-4 w-4" />
+              New live session
+            </Button>
+          )}
         </Link>
       </div>
 
@@ -86,21 +105,31 @@ export default function MeetingsPage() {
             leftIcon={<Search className="h-4 w-4" />}
           />
         </div>
-        <Button
-          variant={filtersOpen || statusFilter !== "all" ? "primary" : "outline"}
-          onClick={() => setFiltersOpen((o) => !o)}
-        >
-          <Filter className="h-4 w-4" />
-          Filters
-        </Button>
+        {mac ? (
+          <MacSegmentedControl<"all" | "summary">
+            value={statusFilter === "summary" ? "summary" : "all"}
+            onChange={setStatusFilter}
+            segments={[
+              { id: "all", label: "All" },
+              { id: "summary", label: "History" },
+            ]}
+          />
+        ) : (
+          <Button
+            variant={filtersOpen || statusFilter !== "all" ? "primary" : "outline"}
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            <Filter className="h-4 w-4" />
+            Filters
+          </Button>
+        )}
       </div>
 
       {filtersOpen && (
         <div className="flex flex-wrap gap-2">
           {(
             [
-              ["all", "All"],
-              ["live", "Live"],
+              ["all", "All completed"],
               ["summary", "Summary ready"],
             ] as const
           ).map(([id, label]) => (
@@ -125,27 +154,14 @@ export default function MeetingsPage() {
         {filtered.map((m) => (
           <Link
             key={m.id}
-            href={
-              m.status === "live" && m.id.startsWith("mtg_")
-                ? "/meetings/live"
-                : `/meetings/${m.id}/summary`
-            }
-            onClick={() => {
-              if (m.status === "live" && m.id.startsWith("mtg_")) {
-                void openCompanionOverlay();
-              }
-            }}
+            href={`/meetings/${m.id}/summary`}
           >
             <Card hover className="h-full p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--primary-muted)] text-primary">
                   <Video className="h-5 w-5" />
                 </div>
-                {m.status === "live" ? (
-                  <Badge variant="success">Live</Badge>
-                ) : (
-                  <Badge>Summary ready</Badge>
-                )}
+                <Badge>Summary ready</Badge>
               </div>
               <h3 className="mt-4 font-semibold tracking-tight">{m.title}</h3>
               <p className="mt-1 text-sm text-muted">
@@ -164,10 +180,19 @@ export default function MeetingsPage() {
         ))}
       </div>
 
-      {loaded && filtered.length === 0 && (
+      {loadError && (
+        <p className="py-8 text-center text-sm text-[var(--cue-danger)]" role="alert">
+          Unable to load meetings.{" "}
+          <button type="button" className="underline" onClick={() => window.location.reload()}>
+            Try Again
+          </button>
+        </p>
+      )}
+
+      {loaded && !loadError && filtered.length === 0 && (
         <p className="py-8 text-center text-sm text-muted">
           {meetings.length === 0
-            ? "No sessions yet. Start a live session to save it here."
+            ? "No meetings yet."
             : `No meetings match your search${statusFilter !== "all" ? " or filters" : ""}.`}
         </p>
       )}

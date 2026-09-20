@@ -17,6 +17,16 @@ type ThemeContextValue = {
   toggleTheme: () => void;
 };
 
+function readDocumentTheme(): Theme {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function applyTheme(next: Theme) {
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("cueai-theme", next);
+}
+
 const ThemeContext = createContext<ThemeContextValue>({
   theme: "dark",
   setTheme: () => {},
@@ -27,21 +37,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("dark");
 
   useEffect(() => {
-    const stored = localStorage.getItem("cueai-theme") as Theme | null;
-    const initial = stored === "light" || stored === "dark" ? stored : "dark";
+    const stored = localStorage.getItem("cueai-theme");
+    const initial = stored === "light" || stored === "dark" ? stored : readDocumentTheme();
     setThemeState(initial);
-    document.documentElement.setAttribute("data-theme", initial);
+    applyTheme(initial);
   }, []);
 
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("cueai-theme", next);
+    applyTheme(next);
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setTheme(theme === "dark" ? "light" : "dark");
-  }, [setTheme, theme]);
+    setThemeState((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      applyTheme(next);
+      return next;
+    });
+  }, []);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>

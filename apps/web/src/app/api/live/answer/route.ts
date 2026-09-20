@@ -194,6 +194,7 @@ export async function POST(request: Request) {
 
     if (groqKey && !preferGemini) {
       try {
+        console.log("[GROQ] Request started");
         result = await generateGroqText({
           system,
           prompt: `${userPrompt}\n\nReturn JSON only: {"answer":"speakable reply","confidence":0.0}`,
@@ -204,6 +205,7 @@ export async function POST(request: Request) {
       } catch (err) {
         if (!credentials) throw err;
         console.error("live_answer_groq_fallback", err instanceof Error ? err.message : err);
+        console.log("[GEMINI] Fallback started");
         result = await generateGeminiText({
           credentials,
           system,

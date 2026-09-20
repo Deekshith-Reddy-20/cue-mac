@@ -68,12 +68,51 @@ const cueDesktop = {
     ipcRenderer.invoke(IpcChannels.COMPANION_GET_CAPTURE_STATUS) as Promise<CaptureStatus>,
   setExcludeCapture: (enabled: boolean) =>
     ipcRenderer.invoke(IpcChannels.COMPANION_SET_EXCLUDE_CAPTURE, enabled) as Promise<CaptureStatus>,
-  captureScreenshot: (opts?: { save?: boolean }) =>
+  captureScreenshot: (opts?: { save?: boolean; displayId?: number }) =>
     ipcRenderer.invoke(IpcChannels.COMPANION_CAPTURE_SCREENSHOT, opts) as Promise<{
       ok: boolean;
       dataUrl?: string;
       savedPath?: string | null;
       error?: string;
+      displayId?: number;
+    }>,
+  listDisplays: () => ipcRenderer.invoke(IpcChannels.DESKTOP_LIST_DISPLAYS),
+  listWindows: () => ipcRenderer.invoke(IpcChannels.DESKTOP_LIST_WINDOWS),
+  getPermissions: () => ipcRenderer.invoke(IpcChannels.PERMISSIONS_GET),
+  requestPermission: (kind: "microphone" | "screen" | "systemAudio") =>
+    ipcRenderer.invoke(IpcChannels.PERMISSIONS_REQUEST, kind),
+  openPrivacySettings: (pane?: "microphone" | "screen" | "systemAudio" | "privacy") =>
+    ipcRenderer.invoke(IpcChannels.PERMISSIONS_OPEN_SETTINGS, pane),
+  getMacDevice: () =>
+    ipcRenderer.invoke(IpcChannels.DEVICE_GET_PUBLIC) as Promise<{
+      deviceId: string;
+      maskedId: string;
+      deviceName: string;
+      platform: "macos";
+      appVersion: string;
+      keychainAvailable: boolean;
+      hasCredential: boolean;
+    }>,
+  registerMacDevice: () =>
+    ipcRenderer.invoke(IpcChannels.DEVICE_REGISTER) as Promise<{
+      ok: boolean;
+      status: "NEW" | "PENDING" | "ACTIVE" | "BLOCKED" | "REVOKED" | "NETWORK_ERROR" | "SERVER_ERROR" | "AUTH_REQUIRED";
+      authorized: boolean;
+      httpStatus?: number;
+      message?: string;
+    }>,
+  verifyMacDevice: () =>
+    ipcRenderer.invoke(IpcChannels.DEVICE_VERIFY) as Promise<{
+      ok: boolean;
+      status: "NEW" | "PENDING" | "ACTIVE" | "BLOCKED" | "REVOKED" | "NETWORK_ERROR" | "SERVER_ERROR" | "AUTH_REQUIRED";
+      authorized: boolean;
+      httpStatus?: number;
+      message?: string;
+    }>,
+  clearMacDeviceSession: () =>
+    ipcRenderer.invoke(IpcChannels.DEVICE_CLEAR_SESSION) as Promise<{
+      cleared: boolean;
+      identityPreserved: boolean;
     }>,
 };
 
@@ -100,13 +139,19 @@ const cueai = {
     ipcRenderer.invoke(IpcChannels.COMPANION_GET_DESKTOP_AUDIO_SOURCE) as Promise<string | null>,
   getWebOrigin: () =>
     ipcRenderer.invoke(IpcChannels.COMPANION_GET_WEB_ORIGIN) as Promise<string>,
-  captureScreenshot: (opts?: { save?: boolean }) =>
+  captureScreenshot: (opts?: { save?: boolean; displayId?: number }) =>
     ipcRenderer.invoke(IpcChannels.COMPANION_CAPTURE_SCREENSHOT, opts) as Promise<{
       ok: boolean;
       dataUrl?: string;
       savedPath?: string | null;
       error?: string;
+      displayId?: number;
     }>,
+  getPermissions: () => ipcRenderer.invoke(IpcChannels.PERMISSIONS_GET),
+  requestPermission: (kind: "microphone" | "screen" | "systemAudio") =>
+    ipcRenderer.invoke(IpcChannels.PERMISSIONS_REQUEST, kind),
+  openPrivacySettings: (pane?: "microphone" | "screen" | "systemAudio" | "privacy") =>
+    ipcRenderer.invoke(IpcChannels.PERMISSIONS_OPEN_SETTINGS, pane),
   beginResize: (dir: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw") =>
     ipcRenderer.invoke(IpcChannels.COMPANION_BEGIN_RESIZE, dir) as Promise<boolean>,
   endResize: () => ipcRenderer.invoke(IpcChannels.COMPANION_END_RESIZE) as Promise<boolean>,

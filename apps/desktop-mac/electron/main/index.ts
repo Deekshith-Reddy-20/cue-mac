@@ -27,9 +27,14 @@ import {
   handleProtocolUrl,
   registerCueaiProtocolClient,
 } from "../services/protocol";
+import { applyMacAppearance, focusOrRestoreWindow } from "../platform/macos";
 
 app.setName("CueAI");
 app.setPath("userData", path.join(app.getPath("appData"), "CueAI-Mac"));
+if (process.env.CUEAI_CDP) {
+  app.commandLine.appendSwitch("remote-debugging-port", process.env.CUEAI_CDP);
+}
+applyMacAppearance();
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -39,12 +44,7 @@ function getMainWindow() {
 }
 
 function focusOrShowMain() {
-  const win = getMainWindow();
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-  }
+  focusOrRestoreWindow(getMainWindow());
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -106,6 +106,10 @@ if (!gotLock) {
       app.setLoginItemSettings({ openAtLogin: true });
     }
 
+    if (process.env.CUEAI_SHOW_OVERLAY === "1") {
+      void showCompanion();
+    }
+
     // Handle protocol URL that launched this process (Windows).
     const launchUrl = extractProtocolUrl(process.argv);
     if (launchUrl) {
@@ -113,11 +117,12 @@ if (!gotLock) {
     }
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        mainWindow = createMainWindow();
-      } else {
-        getMainWindow()?.show();
+      const existing = getMainWindow();
+      if (existing) {
+        focusOrRestoreWindow(existing);
+        return;
       }
+      mainWindow = createMainWindow();
     });
   });
 

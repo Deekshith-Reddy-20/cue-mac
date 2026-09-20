@@ -87,14 +87,7 @@ export const CompanionAI = {
     try {
       return await askGemini(prompt, transcript, image);
     } catch (err) {
-      if (image) {
-        throw err instanceof Error ? err : new Error("Could not analyze that screen.");
-      }
-      const offline = await CompanionAI.askOffline(prompt);
-      return {
-        ...offline,
-        notice: err instanceof Error ? err.message : "Showing an offline sample answer.",
-      };
+      throw err instanceof Error ? err : new Error("Could not get an AI answer.");
     }
   },
 

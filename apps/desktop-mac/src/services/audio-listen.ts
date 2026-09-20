@@ -44,7 +44,7 @@ type RecorderBag = {
 
 const LIVE_SLICE_MS = 2000;
 const MIN_TRANSCRIBE_BYTES = 256;
-const MIN_VOICE_LEVEL = 0.012;
+const SILENT_PEAK = 0.004;
 const MAX_IN_FLIGHT = 2;
 
 let micStream: MediaStream | null = null;
@@ -57,6 +57,11 @@ let liveConfig: LiveTranscribeConfig | null = null;
 let transcribeInFlight = 0;
 let micStartPromise: Promise<void> | null = null;
 let systemStartPromise: Promise<void> | null = null;
+let micPeak = 0;
+let systemPeak = 0;
+let lastMicLevelLog = 0;
+let lastSystemLevelLog = 0;
+let healthTimer: number | null = null;
 
 export function configureLiveTranscription(config: LiveTranscribeConfig | null) {
   liveConfig = config;
@@ -73,10 +78,30 @@ function readLevel(analyser: AnalyserNode) {
   return Math.min(1, Math.sqrt(sum / data.length) * 4);
 }
 
-function levelForWho(who: string) {
-  if (who === "You") return micTap ? readLevel(micTap.analyser) : 0;
-  if (who === "System") return systemTap ? readLevel(systemTap.analyser) : 0;
-  return 0;
+function streamAlive(stream: MediaStream | null) {
+  return Boolean(
+    stream?.active && stream.getAudioTracks().some((track) => track.readyState === "live"),
+  );
+}
+
+function ensureHealthWatch() {
+  if (healthTimer != null) return;
+  healthTimer = window.setInterval(() => {
+    if (micStream && !streamAlive(micStream)) {
+      console.log("[MIC] Stream = dead");
+      setMicState("error");
+      setAudioError("Microphone stream ended.");
+    }
+    if (systemStream && !streamAlive(systemStream)) {
+      console.log("[SYS] Stream = dead");
+      setSystemState("error");
+      setAudioError("System audio stream ended.");
+    }
+    if (!micStream && !systemStream && healthTimer != null) {
+      window.clearInterval(healthTimer);
+      healthTimer = null;
+    }
+  }, 2000);
 }
 
 function attachTap(stream: MediaStream, kind: "mic" | "system"): LevelTap {
@@ -87,8 +112,22 @@ function attachTap(stream: MediaStream, kind: "mic" | "system"): LevelTap {
   source.connect(analyser);
   const tap: LevelTap = { ctx, analyser, source, raf: 0 };
   const tick = () => {
-    if (kind === "mic") setMicLevel(readLevel(analyser));
-    else setSystemLevel(readLevel(analyser));
+    const level = readLevel(analyser);
+    if (kind === "mic") {
+      setMicLevel(level);
+      micPeak = Math.max(micPeak, level);
+      if (level > 0.02 && Date.now() - lastMicLevelLog > 1500) {
+        lastMicLevelLog = Date.now();
+        console.log("[MIC] Audio level detected");
+      }
+    } else {
+      setSystemLevel(level);
+      systemPeak = Math.max(systemPeak, level);
+      if (level > 0.02 && Date.now() - lastSystemLevelLog > 1500) {
+        lastSystemLevelLog = Date.now();
+        console.log("[SYS] Audio level detected");
+      }
+    }
     emitLevelsThrottled(125);
     tap.raf = requestAnimationFrame(tick);
   };
@@ -129,18 +168,27 @@ function pickMimeType() {
 
 async function maybeTranscribeSlice(blob: Blob, who: string) {
   if (!liveConfig) return;
-  const level = levelForWho(who);
+  const peak = who === "You" ? micPeak : systemPeak;
+  if (who === "You") micPeak = 0;
+  else systemPeak = 0;
   if (blob.size < MIN_TRANSCRIBE_BYTES) return;
-  if (level < MIN_VOICE_LEVEL) return;
+  if (peak < SILENT_PEAK && blob.size < 1200) {
+    console.log("[MIC] Silent chunk skipped");
+    return;
+  }
   if (transcribeInFlight >= MAX_IN_FLIGHT) return;
 
   transcribeInFlight++;
+  console.log("[MIC] Audio chunk generated");
   if (who === "You") setMicState("processing");
   else setSystemState("processing");
 
   try {
     const line = await transcribeAudioBlob(blob, who, liveConfig.apiBase);
-    if (line?.text) liveConfig.onResult(line);
+    if (line?.text) {
+      console.log("[TRANSCRIPT] Slice received");
+      liveConfig.onResult(line);
+    }
     clearAudioError();
   } catch (err) {
     const msg = humanizeFetchError(err);
@@ -148,8 +196,10 @@ async function maybeTranscribeSlice(blob: Blob, who: string) {
     liveConfig.onError(msg);
   } finally {
     transcribeInFlight--;
-    if (who === "You" && micStream) setMicState("listening");
-    else if (who === "System" && systemStream) setSystemState("listening");
+    if (who === "You" && streamAlive(micStream)) setMicState("listening");
+    else if (who === "System" && streamAlive(systemStream)) setSystemState("listening");
+    else if (who === "You" && !streamAlive(micStream)) setMicState("error");
+    else if (who === "System" && !streamAlive(systemStream)) setSystemState("error");
   }
 }
 
@@ -207,6 +257,13 @@ async function startMicListenInternal(): Promise<void> {
     let ok = false;
     try {
       setMicState("connecting");
+      if (window.cueai?.requestPermission) {
+        const permission = await window.cueai.requestPermission("microphone");
+        console.log("[MIC] Permission =", permission.state);
+        if (permission.state === "denied" || permission.state === "restricted") {
+          throw new Error(permission.message);
+        }
+      }
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -215,11 +272,19 @@ async function startMicListenInternal(): Promise<void> {
         },
         video: false,
       });
+      const liveTrack = micStream.getAudioTracks().find((t) => t.readyState === "live");
+      console.log("[MIC] Stream =", micStream.active && liveTrack ? "active" : "inactive");
+      liveTrack?.addEventListener("ended", () => {
+        console.log("[MIC] Stream = ended");
+        setMicState("error");
+        setAudioError("Microphone stream ended.");
+      });
       micTap = attachTap(micStream, "mic");
       micRec = startRecorder(micStream, "You");
       if (!micRec) throw new Error("Microphone recorder unavailable");
       setMicState("listening");
       clearAudioError();
+      ensureHealthWatch();
       ok = true;
     } catch (err) {
       const msg = humanizeFetchError(err);
@@ -266,8 +331,19 @@ async function startSystemAudioListenInternal(
   systemStartPromise = (async () => {
     let ok = false;
     try {
+      if (window.cueai?.requestPermission) {
+        const permission = await window.cueai.requestPermission("systemAudio");
+        console.log("[SYS] Permission =", permission.state);
+        if (permission.state === "denied" || permission.state === "restricted") {
+          throw new Error(permission.message);
+        }
+      }
       const sourceId = await getSourceId();
-      if (!sourceId) throw new Error("System audio capture is unavailable on this device.");
+      if (!sourceId) {
+        throw new Error(
+          "System audio is not available. Grant Screen Recording in System Settings, then try again."
+        );
+      }
 
       const constraints = {
         audio: {
@@ -296,11 +372,19 @@ async function startSystemAudioListenInternal(
         systemStream = null;
         throw new Error("System audio capture is unavailable on this device.");
       }
+      const liveTrack = systemStream.getAudioTracks().find((t) => t.readyState === "live");
+      console.log("[SYS] Stream =", systemStream.active && liveTrack ? "active" : "inactive");
+      liveTrack?.addEventListener("ended", () => {
+        console.log("[SYS] Stream = ended");
+        setSystemState("error");
+        setAudioError("System audio stream ended.");
+      });
       systemTap = attachTap(systemStream, "system");
       systemRec = startRecorder(systemStream, "System");
       if (!systemRec) throw new Error("System audio recorder unavailable");
       setSystemState("listening");
       clearAudioError();
+      ensureHealthWatch();
       ok = true;
     } catch (err) {
       const msg = humanizeFetchError(err);
@@ -370,7 +454,7 @@ export async function stopAllListen(): Promise<{
 export async function transcribeAudioBlob(
   blob: Blob,
   who: string,
-  apiBase = "http://127.0.0.1:3000"
+  apiBase = "http://127.0.0.1:3002"
 ): Promise<{ who: string; text: string } | null> {
   if (!blob || blob.size < MIN_TRANSCRIBE_BYTES) return null;
 

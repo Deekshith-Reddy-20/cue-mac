@@ -20,10 +20,12 @@ import { configureAnswerApi } from "./services/live-answer";
 import {
   configureLiveTranscription,
   stopAllListen,
+  subscribeListenLevels,
   syncListenSources,
 } from "./services/audio-listen";
 import type { ScreenshotResult } from "./types/companion";
 import { ResizeHandles } from "./components/ResizeHandles";
+import type { AudioSessionSnapshot } from "./services/audio-session-manager";
 
 function formatElapsed(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -81,16 +83,30 @@ export default function App() {
   const [autoAnswer, setAutoAnswer] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const [webApiBase, setWebApiBase] = useState("http://127.0.0.1:3000");
+  const [webApiBase, setWebApiBase] = useState("http://127.0.0.1:3002");
   const [expanded, setExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [shotBusy, setShotBusy] = useState(false);
+  const [audioSession, setAudioSession] = useState<AudioSessionSnapshot>({
+    mic: "idle",
+    system: "idle",
+    micLevel: 0,
+    systemLevel: 0,
+    error: null,
+  });
+  const lastAnsweredRef = useRef("");
   const startedAtRef = useRef(Date.now());
   const aiBusyRef = useRef(false);
   const autoAnswerRef = useRef(autoAnswer);
   autoAnswerRef.current = autoAnswer;
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
+  const pendingUtteranceRef = useRef({ text: "", who: "", timer: 0 });
+  const runAskRef = useRef<(prompt: string, opts?: { image?: string; echoAsYou?: boolean }) => Promise<void>>(
+    async () => undefined,
+  );
   const askRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const meetingKeyRef = useRef<string | null>(null);
@@ -99,7 +115,9 @@ export default function App() {
   const lastHeard = [...transcript].reverse().find((t) => t.who !== "CueAI");
   const hasAnswer = Boolean(answer.trim());
   const boardOpen = streaming || hasAnswer || Boolean(question.trim());
-  const listening = listen.mic || listen.systemAudio;
+  const listening = audioSession.mic === "listening" || audioSession.system === "listening";
+  const micLive = audioSession.mic === "listening";
+  const systemLive = audioSession.system === "listening";
   const kicker = shotBusy
     ? "Reading screen"
     : streaming
@@ -109,16 +127,12 @@ export default function App() {
         : "Ready";
 
   useEffect(() => {
-    if (window.cueai) return;
-    setQuestion("Walk me through how you’d debug a production outage.");
-    setAnswer(
-      "I’d start by confirming the blast radius — what’s failing, who is affected, and when it started. Then I’d check the last deploy, error rates, and the first log line that changed. I’d narrate that out loud so the interviewer hears the order: impact, evidence, hypothesis, then a rollback or feature-flag if the blast radius is large.",
-    );
-  }, []);
-
-  useEffect(() => {
     void window.cueai?.pin(pinned);
   }, [pinned]);
+
+  useEffect(() => {
+    return subscribeListenLevels(setAudioSession);
+  }, []);
 
   useEffect(() => {
     void window.cueai?.getCaptureStatus().then((s) => s && setCapture(s));
@@ -159,32 +173,32 @@ export default function App() {
       onResult: (line) => {
         appendTranscript(line);
         setStatusMsg(null);
-        if (!autoAnswerRef.current || aiBusyRef.current) return;
-        aiBusyRef.current = true;
-        void (async () => {
-          rememberQuestion(line.text);
-          setStreaming(true);
-          try {
-            const ctx = [
-              ...transcriptRef.current.map((t) => `${t.who}: ${t.text}`),
-              `${line.who}: ${line.text}`,
-            ];
-            const result = await AIService.ask(`Brief response to: ${line.text}`, {
-              transcript: ctx,
-            }, { fallback: false });
-            setAnswer(result.answer);
-            appendTranscript({ who: "CueAI", text: result.answer });
-          } catch (err) {
-            setStatusMsg(err instanceof Error ? err.message : "Unable to generate an answer.");
-          } finally {
-            setStreaming(false);
-            aiBusyRef.current = false;
-          }
-        })();
+        const chunk = line.text.trim();
+        if (!chunk) return;
+        const pending = pendingUtteranceRef.current;
+        const sameSpeaker = !pending.who || pending.who === line.who;
+        pending.text = sameSpeaker ? `${pending.text} ${chunk}`.trim() : chunk;
+        pending.who = line.who;
+        window.clearTimeout(pending.timer);
+        pending.timer = window.setTimeout(() => {
+          const finalQuestion = pending.text.trim();
+          pending.text = "";
+          pending.who = "";
+          pending.timer = 0;
+          if (finalQuestion.length < 8) return;
+          console.log("[TRANSCRIPT] Final transcript received");
+          if (!autoAnswerRef.current || aiBusyRef.current || streamingRef.current) return;
+          const key = finalQuestion.toLowerCase().replace(/\s+/g, " ");
+          if (key === lastAnsweredRef.current) return;
+          void runAskRef.current(`Brief response to: ${finalQuestion}`, { echoAsYou: false });
+        }, 1400);
       },
       onError: (msg) => setStatusMsg(msg),
     });
-    return () => configureLiveTranscription(null);
+    return () => {
+      window.clearTimeout(pendingUtteranceRef.current.timer);
+      configureLiveTranscription(null);
+    };
   }, [appendTranscript, webApiBase]);
 
   useEffect(() => {
@@ -272,26 +286,32 @@ export default function App() {
     if (text) setQuestion(text);
   }
 
-  async function runAsk(prompt: string, image?: string) {
+  async function runAsk(prompt: string, image?: string, opts?: { echoAsYou?: boolean }) {
     const q = prompt.trim();
-    if (!q || (streaming && !image)) return;
+    if (!q || (streamingRef.current && !image)) return;
     bumpActivity();
-    if (!image) rememberQuestion(q);
+    const spoken = q.replace(/^Brief response to:\s*/i, "").trim();
+    if (!image) rememberQuestion(spoken || q);
     setStreaming(true);
-    const context = transcript.map((t) => `${t.who}: ${t.text}`);
-    if (!image) appendTranscript({ who: "You", text: q });
+    aiBusyRef.current = true;
+    const context = transcriptRef.current.map((t) => `${t.who}: ${t.text}`);
+    if (!image && opts?.echoAsYou !== false) appendTranscript({ who: "You", text: q });
 
     try {
       const result = await AIService.ask(q, { transcript: context, image }, { fallback: false });
       setAnswer(result.answer);
       setStatusMsg(null);
       appendTranscript({ who: "CueAI", text: result.answer });
+      lastAnsweredRef.current = spoken.toLowerCase().replace(/\s+/g, " ");
     } catch (err) {
+      lastAnsweredRef.current = "";
       setStatusMsg(err instanceof Error ? err.message : "Unable to generate an answer. Try again.");
     } finally {
       setStreaming(false);
+      aiBusyRef.current = false;
     }
   }
+  runAskRef.current = (prompt, opts) => runAsk(prompt, opts?.image, { echoAsYou: opts?.echoAsYou });
 
   async function onAsk(e: FormEvent) {
     e.preventDefault();
@@ -299,6 +319,22 @@ export default function App() {
     if (!prompt) return;
     setAsk("");
     await runAsk(prompt);
+  }
+
+  async function ensurePermission(kind: "microphone" | "systemAudio"): Promise<boolean> {
+    const api = window.cueai;
+    if (!api?.getPermissions || !api.requestPermission) return true;
+    const current = await api.getPermissions();
+    const status = kind === "microphone" ? current.microphone : current.systemAudio;
+    if (status.state === "granted") return true;
+    if (status.state === "denied" || status.state === "restricted") {
+      setStatusMsg(status.message);
+      return false;
+    }
+    const next = await api.requestPermission(kind === "microphone" ? "microphone" : "systemAudio");
+    if (next.state === "granted" || next.state === "not-determined") return true;
+    setStatusMsg(next.message);
+    return false;
   }
 
   async function generateAnswer() {
@@ -388,13 +424,26 @@ export default function App() {
 
   async function toggleListen(kind: "mic" | "systemAudio") {
     bumpActivity();
+    const turningOn = kind === "mic" ? !listen.mic : !listen.systemAudio;
+    if (turningOn) {
+      const ok = await ensurePermission(kind === "mic" ? "microphone" : "systemAudio");
+      if (!ok) return;
+    }
     const next = {
       mic: kind === "mic" ? !listen.mic : listen.mic,
       systemAudio: kind === "systemAudio" ? !listen.systemAudio : listen.systemAudio,
     };
     setListen(next);
-    const saved = await window.cueai?.setListenSources(next);
-    if (saved) setListen(saved);
+    try {
+      const saved = await window.cueai?.setListenSources(next);
+      if (saved) setListen(saved);
+    } catch (err) {
+      setListen({
+        mic: kind === "mic" ? listen.mic : next.mic,
+        systemAudio: kind === "systemAudio" ? listen.systemAudio : next.systemAudio,
+      });
+      setStatusMsg(err instanceof Error ? err.message : "Could not change listen sources.");
+    }
   }
 
   const askPlaceholder = shotBusy
@@ -442,14 +491,14 @@ export default function App() {
             {menuOpen && (
               <div className="cue-menu" role="menu">
                 <button type="button" role="menuitem" onClick={() => void toggleListen("mic")}>
-                  {listen.mic ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                  {micLive ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
                   <span>Microphone</span>
-                  <em>{listen.mic ? "On" : "Off"}</em>
+                  <em>{micLive ? "Listening" : listen.mic ? audioSession.mic : "Off"}</em>
                 </button>
                 <button type="button" role="menuitem" onClick={() => void toggleListen("systemAudio")}>
-                  {listen.systemAudio ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                  <span>Meeting audio</span>
-                  <em>{listen.systemAudio ? "On" : "Off"}</em>
+                  {systemLive ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                  <span>System audio</span>
+                  <em>{systemLive ? "Listening" : listen.systemAudio ? audioSession.system : "Off"}</em>
                 </button>
                 <hr />
                 <button type="button" role="menuitem" onClick={() => setPinned(!pinned)}>
@@ -485,6 +534,12 @@ export default function App() {
             ref={askRef}
             value={ask}
             onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                void onAsk(e);
+              }
+            }}
             placeholder={askPlaceholder}
             aria-label="Ask CueAI"
           />
@@ -523,7 +578,20 @@ export default function App() {
               </div>
             </div>
             <h1>{question || lastHeard?.text || "Ready when you are"}</h1>
-            {statusMsg && <p className="cue-error">{statusMsg}</p>}
+            {(statusMsg || audioSession.error) && (
+              <p className="cue-error">
+                {statusMsg || audioSession.error}
+                {(statusMsg || audioSession.error)?.includes("System Settings") && (
+                  <button
+                    type="button"
+                    className="cue-action"
+                    onClick={() => void window.cueai?.openPrivacySettings?.("privacy")}
+                  >
+                    Open System Settings
+                  </button>
+                )}
+              </p>
+            )}
             {streaming ? (
               <div className="cue-think">
                 <span className="cue-pulse" aria-hidden />

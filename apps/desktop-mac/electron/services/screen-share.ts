@@ -12,6 +12,7 @@ import {
 } from "./companion-bounds";
 import { getStoreValue, setStoreValue } from "./store";
 import type { CompanionMode } from "../ipc/channels";
+import { setOverlayCaptureProtection } from "../platform/macos";
 
 export type MeetingSessionState = {
   active: boolean;
@@ -68,11 +69,17 @@ export function getCaptureProtectionStatus(): CaptureProtectionStatus {
 
 /**
  * Prefer excluding the companion from common window-capture pipelines.
- * Electron maps this to SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) on
- * Windows 10 2004+ / Windows 11, and NSWindowSharingNone on macOS.
- * Some meeting apps may still capture the window — degrade gracefully.
+ * Windows uses SetWindowDisplayAffinity in apps/desktop.
+ * macOS uses setContentProtection → NSWindowSharingNone.
  */
 export function applyCaptureExclusion(win: BrowserWindow | null): CaptureProtectionStatus {
+  const enabled = getStoreValue("desktopSettings").excludeFromCapture !== false;
+
+  if (process.platform === "darwin") {
+    protectionStatus = setOverlayCaptureProtection(win, enabled);
+    return getCaptureProtectionStatus();
+  }
+
   if (!win || win.isDestroyed()) {
     protectionStatus = {
       requested: true,
@@ -83,7 +90,6 @@ export function applyCaptureExclusion(win: BrowserWindow | null): CaptureProtect
     return getCaptureProtectionStatus();
   }
 
-  const enabled = getStoreValue("desktopSettings").excludeFromCapture !== false;
   if (!enabled) {
     try {
       win.setContentProtection(false);
@@ -100,15 +106,11 @@ export function applyCaptureExclusion(win: BrowserWindow | null): CaptureProtect
   }
 
   try {
-    // Work around known Electron opacity + content-protection interactions.
     const current = win.getOpacity();
     win.setOpacity(Math.min(1, Math.max(0.5, current || 0.96)));
-
     win.setContentProtection(true);
-
     const applied =
       typeof win.isContentProtected === "function" ? win.isContentProtected() : true;
-
     protectionStatus = {
       requested: true,
       applied,
@@ -170,12 +172,16 @@ export function setMeetingSession(next: Partial<MeetingSessionState>) {
     exitPresentationForShare();
   }
 
-  if ((!cueAiOn && prevCueAiOn) || (!session.active && prev.active)) {
-    if (prev.screenSharing || getStoreValue("companionMode") === "presenter") {
-      exitPresentationForShare();
-    }
-    controller?.hide();
+  if (
+    !session.active &&
+    prev.active &&
+    (prev.screenSharing || getStoreValue("companionMode") === "presenter")
+  ) {
+    exitPresentationForShare();
   }
+
+  // Do not auto-hide the system-wide overlay when a meeting ends.
+  // Hide is explicit: End Session, Hide, Escape, or hideCompanion IPC.
 
   const win = controller?.getWindow();
   win?.webContents.send("companion:session", getMeetingSession());

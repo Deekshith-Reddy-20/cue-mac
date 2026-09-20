@@ -2,7 +2,6 @@
  * Replaceable service abstractions for CueAI Desktop.
  */
 import {
-  LiveAnswerUnavailable,
   requestLiveAnswer,
   type LiveTranscriptLine,
 } from "./live-answer";
@@ -70,27 +69,15 @@ function asTranscriptLines(context?: AskContext): LiveTranscriptLine[] {
 
 export const AuthService = {
   async getSession(): Promise<AuthSession | null> {
-    await delay(100);
-    return {
-      userId: "u_demo",
-      name: "Demo User",
-      email: "demo@cueai.app",
-      workspace: "CueAI",
-    };
+    return null;
   },
 };
 
 export const MeetingService = {
   async listRecent(): Promise<MeetingSummary[]> {
-    await delay();
-    return [
-      { id: "m1", title: "Q3 Product Sync", durationMin: 42, actionItems: 5 },
-      { id: "m2", title: "Customer Discovery", durationMin: 28, actionItems: 3 },
-      { id: "m3", title: "Design Critique", durationMin: 35, actionItems: 4 },
-    ];
+    return [];
   },
   async start() {
-    await delay(200);
     return { meetingId: `m_${Date.now()}`, startedAt: new Date().toISOString() };
   },
 };
@@ -102,15 +89,9 @@ export const AIService = {
     context?: AskContext,
     opts?: { fallback?: boolean },
   ): Promise<AskResult> {
-    try {
-      const live = await requestLiveAnswer(prompt, asTranscriptLines(context), context?.image);
-      return { answer: live.answer, confidence: live.confidence, model: live.model };
-    } catch (err) {
-      if (!(err instanceof LiveAnswerUnavailable)) throw err;
-      if (opts?.fallback === false) throw err;
-      const fallback = await AIService.askOffline(prompt, context);
-      return { ...fallback, notice: err.message };
-    }
+    void opts;
+    const live = await requestLiveAnswer(prompt, asTranscriptLines(context), context?.image);
+    return { answer: live.answer, confidence: live.confidence, model: live.model };
   },
 
   async askOffline(prompt: string, context?: AskContext): Promise<AskResult> {

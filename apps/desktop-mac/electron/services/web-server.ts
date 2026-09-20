@@ -110,7 +110,7 @@ function buildChildEnv(root: string): NodeJS.ProcessEnv {
 }
 
 /**
- * Dev → localhost:3000 (or CUEAI_WEB_URL).
+ * Dev → localhost:3002 (or CUEAI_WEB_URL).
  * Packaged → spawn Next standalone with Electron-as-Node.
  */
 export async function startEmbeddedWebServer(): Promise<string> {
@@ -123,7 +123,7 @@ export async function startEmbeddedWebServer(): Promise<string> {
   }
 
   if (!app.isPackaged) {
-    webOrigin = "http://127.0.0.1:3000";
+    webOrigin = "http://127.0.0.1:3002";
     return webOrigin;
   }
 
@@ -172,7 +172,7 @@ export async function startEmbeddedWebServer(): Promise<string> {
 }
 
 export function getWebOrigin() {
-  return webOrigin || process.env.CUEAI_WEB_URL || "http://127.0.0.1:3000";
+  return webOrigin || process.env.CUEAI_WEB_URL || "http://127.0.0.1:3002";
 }
 
 export function stopEmbeddedWebServer() {

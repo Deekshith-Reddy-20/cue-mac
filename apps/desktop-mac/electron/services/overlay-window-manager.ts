@@ -26,6 +26,11 @@ import {
   dockPresenterToEdge,
   getMeetingSession,
 } from "./screen-share";
+import {
+  installMacContextMenu,
+  macCompanionWindowOptions,
+  presentCompanionWindow,
+} from "../platform/macos";
 
 export type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
@@ -238,9 +243,15 @@ function wireWindowEvents(win: BrowserWindow) {
     showCompanionLoadError(win, url || companionLoadTarget || devUrl, desc, code);
   });
 
+  win.setClosable(false);
   win.on("close", (e) => {
     if (allowQuit) return;
     e.preventDefault();
+    // Spurious close on create/show must not dismiss an explicit overlay open.
+    if (Date.now() < explicitShowGraceUntil) {
+      log("OVERLAY", "Ignored close during overlay show");
+      return;
+    }
     void hideOverlay();
   });
 
@@ -271,42 +282,32 @@ export function ensureOverlayWindow(): BrowserWindow {
 
   const initial = resolveInitialBounds();
 
-  overlayWin = new BrowserWindow({
-    width: initial.width,
-    height: initial.height,
-    x: initial.x,
-    y: initial.y,
-    minWidth: COMPANION_MIN_WIDTH,
-    minHeight: COMPANION_MIN_HEIGHT,
-    show: false,
-    frame: false,
-    transparent: true,
-    type: process.platform === "darwin" ? "panel" : "normal",
-    vibrancy: "hud",
-    visualEffectState: "active",
-    backgroundColor: "#00000000",
-    alwaysOnTop: true,
-    resizable: true,
-    skipTaskbar: true,
-    hasShadow: true,
-    roundedCorners: true,
-    focusable: true,
-    fullscreenable: false,
-    hiddenInMissionControl: true,
-    title: "CueAI",
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: true,
-      spellcheck: false,
-      v8CacheOptions: "code",
-    },
-  });
+  overlayWin = new BrowserWindow(
+    macCompanionWindowOptions({
+      width: initial.width,
+      height: initial.height,
+      x: initial.x,
+      y: initial.y,
+      minWidth: COMPANION_MIN_WIDTH,
+      minHeight: COMPANION_MIN_HEIGHT,
+      show: false,
+      resizable: true,
+      title: "CueAI",
+      webPreferences: {
+        preload: path.join(__dirname, "../preload/index.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        backgroundThrottling: true,
+        spellcheck: false,
+        v8CacheOptions: "code",
+      },
+    })
+  );
 
   applyWindowConstraints(overlayWin);
   wireWindowEvents(overlayWin);
+  if (process.platform === "darwin") installMacContextMenu(overlayWin);
   bindDisplayMetricsOnce();
 
   const pinned = getStoreValue("companionPinned") !== false;
@@ -442,22 +443,46 @@ export function endOverlayResize() {
   log("RESIZE", "End");
 }
 
+function waitForCompanionReady(win: BrowserWindow, timeoutMs = 2500) {
+  const url = win.webContents.getURL();
+  if (url && url !== "about:blank" && !win.webContents.isLoading()) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      win.removeListener("ready-to-show", done);
+      win.webContents.removeListener("did-finish-load", done);
+      win.webContents.removeListener("did-fail-load", done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    win.once("ready-to-show", done);
+    win.webContents.once("did-finish-load", done);
+    win.webContents.once("did-fail-load", done);
+  });
+}
+
 async function showOverlayInner() {
   const epoch = ++visibilityEpoch;
   explicitShowGraceUntil = Date.now() + 60_000;
   clearIdleTimers();
-  log("OVERLAY", "Show requested");
+  log("COMPANION", "Open requested");
 
+  const existed = Boolean(overlayWin && !overlayWin.isDestroyed());
+  if (!existed) log("COMPANION", "Creating companion");
   const win = ensureOverlayWindow();
+  if (!existed) log("COMPANION", "BrowserWindow created");
 
   if (win.isMinimized()) win.restore();
 
-  const clamped = clampBoundsToWorkArea(win.getBounds());
+  const current = win.getBounds();
+  const clamped = clampBoundsToWorkArea(current);
   if (
-    clamped.width !== win.getBounds().width ||
-    clamped.height !== win.getBounds().height ||
-    clamped.x !== win.getBounds().x ||
-    clamped.y !== win.getBounds().y
+    clamped.width !== current.width ||
+    clamped.height !== current.height ||
+    clamped.x !== current.x ||
+    clamped.y !== current.y
   ) {
     win.setBounds(clamped, false);
     log("BOUNDS", `Corrected bounds on show ${clamped.width}x${clamped.height}`);
@@ -469,20 +494,13 @@ async function showOverlayInner() {
     win.webContents.send("companion:mode", "full");
   }
 
-  const pinned = getStoreValue("companionPinned") !== false;
-  win.setAlwaysOnTop(pinned, "screen-saver");
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   applyCaptureExclusion(win);
-
-  const opacity = getStoreValue("companionOpacity");
-  const nextOpacity = Math.min(1, Math.max(0.35, Number(opacity) || 1));
-  setStoreValue("companionOpacity", nextOpacity);
-  win.setOpacity(nextOpacity);
+  setStoreValue("companionOpacity", 1);
+  win.setClosable(false);
 
   const url = win.webContents.getURL();
   const devUrl = getCompanionDevUrl();
-  const bundled = resolveBundledCompanionPath();
-  const expectsFile = app.isPackaged || Boolean(bundled);
+  const expectsFile = app.isPackaged;
   const needsReload =
     companionLoadError ||
     !url ||
@@ -492,18 +510,29 @@ async function showOverlayInner() {
       : !url.startsWith(devUrl) && !url.startsWith("data:text/html"));
 
   if (needsReload && !win.webContents.isLoading()) {
-    log("OVERLAY", "Reloading companion UI");
+    log("COMPANION", "Loading companion");
     loadCompanionUrl(win);
   }
 
-  if (!win.isVisible()) win.show();
+  await waitForCompanionReady(win);
+  if (epoch !== visibilityEpoch || win.isDestroyed()) return;
+  log("COMPANION", "Companion ready");
+
+  const visible = await presentCompanionWindow(win);
   if (epoch !== visibilityEpoch || win.isDestroyed()) return;
 
-  win.moveTop();
-  win.focus();
   win.webContents.send("companion:visibility", true);
   win.webContents.send("companion:window-state", getCompanionWindowState());
-  log("OVERLAY", "Visible");
+  if (visible) {
+    log("COMPANION", "Window shown");
+    log("COMPANION", "Always-on-top enabled");
+  }
+  log(
+    "COMPANION",
+    visible
+      ? `Visible ${win.getBounds().width}x${win.getBounds().height} @ ${win.getBounds().x},${win.getBounds().y}`
+      : "Show requested but window is not visible yet"
+  );
 }
 
 export function showOverlay() {

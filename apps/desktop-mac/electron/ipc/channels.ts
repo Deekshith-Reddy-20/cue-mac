@@ -46,6 +46,16 @@ export const IpcChannels = {
   DESKTOP_SHOW_NOTIFICATION: "desktop:show-notification",
   DESKTOP_PICK_FILE: "desktop:pick-file",
   DESKTOP_SAVE_FILE: "desktop:save-file",
+  DESKTOP_LIST_DISPLAYS: "desktop:list-displays",
+  DESKTOP_LIST_WINDOWS: "desktop:list-windows",
+
+  PERMISSIONS_GET: "permissions:get",
+  PERMISSIONS_REQUEST: "permissions:request",
+  PERMISSIONS_OPEN_SETTINGS: "permissions:open-settings",
+  DEVICE_GET_PUBLIC: "device:get-public",
+  DEVICE_REGISTER: "device:register",
+  DEVICE_VERIFY: "device:verify",
+  DEVICE_CLEAR_SESSION: "device:clear-session",
 
   // Settings / store
   STORE_GET: "store:get",

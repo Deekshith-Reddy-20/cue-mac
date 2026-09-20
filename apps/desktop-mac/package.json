@@ -7,7 +7,10 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "vite",
+    "dev:mac": "vite",
     "build": "tsc -p tsconfig.node.json --noEmit && vite build && tsc -p tsconfig.electron.json",
+    "build:mac": "npm run build",
+    "dist:mac": "npm run dist",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.electron.json",
     "pack": "npm run build && electron-builder --dir --mac",
     "dist": "npm run build && electron-builder --mac dmg zip --universal"
@@ -54,6 +57,8 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": null,
       "target": [
         {
           "target": "dmg",
@@ -64,13 +69,18 @@
           "arch": ["universal"]
         }
       ],
-      "artifactName": "CueAI-Mac-${version}-${arch}.${ext}",
+      "artifactName": "CueAI-${version}-${arch}.${ext}",
       "darkModeSupport": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "CueAI listens to your meeting so it can suggest answers in the HUD.",
-        "NSCameraUsageDescription": "CueAI can read the screen to brief you on what’s in front of you."
+        "CFBundleDisplayName": "CueAI",
+        "CFBundleName": "CueAI",
+        "NSMicrophoneUsageDescription": "CueAI uses the microphone to transcribe your side of a meeting and suggest answers.",
+        "NSScreenCaptureUsageDescription": "CueAI captures the selected display for Screen Context and can use that capture path for system audio.",
+        "NSAudioCaptureUsageDescription": "CueAI captures system audio from the selected display so Auto Answer can hear the meeting."
       }
     },
     "dmg": {

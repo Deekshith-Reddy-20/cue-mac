@@ -127,7 +127,18 @@ export function startLocalBridge() {
     }
   });
 
-  server.on("error", (err) => {
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    const busy =
+      err.code === "EADDRINUSE" ||
+      err.code === "10048" ||
+      /EADDRINUSE/i.test(err.message || "");
+    if (busy) {
+      console.warn(
+        `[cueai-bridge] port ${CUEAI_BRIDGE_PORT} already in use — CueAI will use cueDesktop IPC for the overlay`
+      );
+      server = null;
+      return;
+    }
     console.error("[cueai-bridge]", err);
   });
 

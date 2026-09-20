@@ -9,6 +9,7 @@ import {
 import { IpcChannels, type CompanionMode } from "./channels";
 import { getAllStore, getStoreValue, setStoreValue } from "../services/store";
 import {
+  getCompanionBridgeStatus,
   getCompanionWindow,
   hideCompanion,
   setCompanionMode,
@@ -34,12 +35,25 @@ import {
 import { getDesktopAudioSourceId } from "../services/audio-listen";
 import { capturePrimaryScreenshot } from "../services/screenshot";
 import { getWebOrigin } from "../services/web-server";
+import { allowNextWindowClose } from "../services/app-lifecycle";
+import {
+  getMacOSPermissions,
+  listMacDisplays,
+  listMacWindows,
+  openMacOSPrivacySettings,
+  requestMacOSPermission,
+  zoomOrRestoreWindow,
+  macDeviceService,
+  type MacPermissionKind,
+} from "../platform/macos";
 
 function getMainWindow() {
   return BrowserWindow.getAllWindows().find(
     (w) =>
       w.getTitle() === "CueAI" ||
       w.webContents.getURL().includes("localhost:3000") ||
+      w.webContents.getURL().includes("127.0.0.1:3002") ||
+      w.webContents.getURL().includes("127.0.0.1:3030") ||
       w.webContents.getURL().includes("127.0.0.1:39100") ||
       w.webContents.getURL().includes("/dashboard")
   );
@@ -57,6 +71,7 @@ export function registerIpcHandlers() {
   ipcMain.handle(IpcChannels.WINDOW_MAXIMIZE, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return false;
+    if (process.platform === "darwin") return zoomOrRestoreWindow(win);
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
     return win.isMaximized();
@@ -72,15 +87,19 @@ export function registerIpcHandlers() {
       return;
     }
 
-    // Main shell always hides — companion / tray keep the process alive.
-    win.hide();
+    allowNextWindowClose();
+    if (!win.isDestroyed()) win.close();
   });
 
   ipcMain.handle(IpcChannels.WINDOW_IS_MAXIMIZED, (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
 
-  ipcMain.handle(IpcChannels.COMPANION_SHOW, () => showCompanion());
+  ipcMain.handle(IpcChannels.COMPANION_SHOW, async () => {
+    if (!app.isPackaged) console.log("[COMPANION] IPC received");
+    await showCompanion();
+    return getCompanionBridgeStatus();
+  });
   ipcMain.handle(IpcChannels.COMPANION_HIDE, () => hideCompanion());
   ipcMain.handle(IpcChannels.COMPANION_TOGGLE, () => toggleCompanion());
   ipcMain.handle(IpcChannels.COMPANION_MINIMIZE, () => getCompanionWindow()?.minimize());
@@ -212,14 +231,57 @@ export function registerIpcHandlers() {
 
   ipcMain.handle(
     IpcChannels.COMPANION_CAPTURE_SCREENSHOT,
-    async (event, payload?: { save?: boolean }) => {
+    async (event, payload?: { save?: boolean; displayId?: number }) => {
       const parent = BrowserWindow.fromWebContents(event.sender);
       return capturePrimaryScreenshot({
-        save: payload?.save !== false,
+        save: payload?.save === true,
+        displayId: payload?.displayId,
         parent,
       });
     }
   );
+
+  ipcMain.handle(IpcChannels.DESKTOP_LIST_DISPLAYS, () => listMacDisplays());
+  ipcMain.handle(IpcChannels.DESKTOP_LIST_WINDOWS, () => listMacWindows());
+  ipcMain.handle(IpcChannels.PERMISSIONS_GET, () => getMacOSPermissions());
+  ipcMain.handle(
+    IpcChannels.PERMISSIONS_REQUEST,
+    (_e, kind: MacPermissionKind) => requestMacOSPermission(kind)
+  );
+  ipcMain.handle(IpcChannels.PERMISSIONS_OPEN_SETTINGS, (_e, pane?: MacPermissionKind | "privacy") =>
+    openMacOSPrivacySettings(pane || "privacy")
+  );
+  ipcMain.handle(IpcChannels.DEVICE_GET_PUBLIC, () => {
+    try {
+      console.log("[DEVICE] Device ID loaded");
+      return macDeviceService.getPublicDevice();
+    } catch (err) {
+      console.error("[DEVICE] Failed to read Mac device identity", err);
+      throw err;
+    }
+  });
+
+  ipcMain.handle(IpcChannels.DEVICE_VERIFY, async (event) => {
+    console.log("[DEVICE] Startup check");
+    console.log("[DEVICE] Authentication state");
+    const origin = getWebOrigin();
+    return macDeviceService.verifyDevice(
+      (input, init) => event.sender.session.fetch(input, init),
+      origin,
+    );
+  });
+
+  ipcMain.handle(IpcChannels.DEVICE_REGISTER, async (event) => {
+    const origin = getWebOrigin();
+    return macDeviceService.registerDevice(
+      (input, init) => event.sender.session.fetch(input, init),
+      origin,
+    );
+  });
+
+  ipcMain.handle(IpcChannels.DEVICE_CLEAR_SESSION, () => {
+    return macDeviceService.clearDeviceSession();
+  });
 
   ipcMain.handle(
     IpcChannels.MEETING_SET_SESSION,
@@ -247,10 +309,11 @@ export function registerIpcHandlers() {
     const companion = getCompanionWindow();
     const meeting = getMeetingSession();
     const capture = getCaptureProtectionStatus();
+    const overlay = getCompanionBridgeStatus();
     return {
       isDesktop: true as const,
       version: app.getVersion(),
-      companionVisible: Boolean(companion?.isVisible()),
+      companionVisible: Boolean(overlay.visible || companion?.isVisible()),
       companionMode: getStoreValue("companionMode"),
       alwaysOnTop: getStoreValue("companionPinned"),
       launchAtStartup: getStoreValue("launchAtStartup"),

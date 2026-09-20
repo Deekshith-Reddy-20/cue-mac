@@ -7,30 +7,40 @@ import {
   Search,
   Sun,
   ChevronDown,
-  Plus,
   LogOut,
   Video,
   FileText,
   BookOpen,
   Settings,
   Check,
+  User,
+  Shield,
+  Palette,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/misc";
-import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { toggleCompanionOverlay } from "@/lib/desktop";
+import { getDesktop } from "@/lib/desktop";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
+import { withDesktopParam } from "@/lib/desktop-query";
 
-const INITIAL_NOTIFS = [
-  { id: "n1", text: "Welcome to CueAI — your workspace is ready", href: "/dashboard" },
-  { id: "n2", text: "Try starting a live meeting session", href: "/meetings/live" },
-  { id: "n3", text: "Upload docs to your Knowledge Base", href: "/knowledge" },
-];
+type AppNotification = {
+  id: string;
+  title: string;
+  body?: string;
+  href: string;
+  createdAt: string;
+};
+
+type WorkspaceRow = {
+  id: string;
+  name: string;
+  current?: boolean;
+};
 
 const COMMAND_LINKS = [
   { label: "Start live meeting", href: "/meetings/live", icon: Video },
@@ -48,22 +58,21 @@ export function Topbar() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
-  const [notifs, setNotifs] = useState(INITIAL_NOTIFS);
+  const [notifs, setNotifs] = useState<AppNotification[]>([]);
+  const [notifError, setNotifError] = useState<string | null>(null);
   const [readIds, setReadIds] = useState<string[]>([]);
-  // Avoid SSR/client mismatch: cueDesktop / bridge only exist after mount.
-  const [desktopReady, setDesktopReady] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [meetingHits, setMeetingHits] = useState<{ id: string; title: string }[]>([]);
   const [macDesktop, setMacDesktop] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { isDesktopAvailable, isMacDesktopApp } = await import("@/lib/desktop");
-      const ok = await isDesktopAvailable();
-      if (!cancelled) {
-        setDesktopReady(ok);
-        setMacDesktop(isMacDesktopApp());
-      }
+      const { isMacDesktopApp } = await import("@/lib/desktop");
+      if (!cancelled) setMacDesktop(isMacDesktopApp());
     })();
     return () => {
       cancelled = true;
@@ -71,36 +80,148 @@ export function Topbar() {
   }, []);
 
   useEffect(() => {
+    if (!session?.userId) {
+      setReadIds([]);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(`cueai-notif-read:${session.userId}`);
+      setReadIds(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      setReadIds([]);
+    }
+  }, [session?.userId]);
+
+  useEffect(() => {
+    if (!session?.userId) {
+      setNotifs([]);
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/notifications", { cache: "no-store", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unable to load notifications.");
+        return res.json() as Promise<{ notifications?: AppNotification[] }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setNotifs(data.notifications || []);
+        setNotifError(null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNotifs([]);
+          setNotifError("Unable to load notifications.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.userId]);
+
+  useEffect(() => {
+    if (!session?.userId) {
+      setWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/workspaces", { cache: "no-store", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unable to load workspaces.");
+        return res.json() as Promise<{ workspaces?: WorkspaceRow[] }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setWorkspaces(data.workspaces || []);
+        setWorkspaceError(null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaces([]);
+          setWorkspaceError("Unable to load workspaces.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.userId]);
+
+  useEffect(() => {
     if (!commandOpen) return;
     commandInputRef.current?.focus();
+    let cancelled = false;
+    void fetch("/api/meetings", { cache: "no-store", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) return { meetings: [] as { id: string; title: string }[] };
+        return res.json() as Promise<{ meetings?: { id: string; title: string }[] }>;
+      })
+      .then((data) => {
+        if (!cancelled) setMeetingHits(data.meetings || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMeetingHits([]);
+      });
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setCommandOpen(false);
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [commandOpen]);
 
-  const displayName = session?.name || "Guest";
-  const workspace = session?.workspace || "CueAI";
-  const initial = displayName.trim().charAt(0).toUpperCase() || "C";
-  const unread = notifs.filter((n) => !readIds.includes(n.id)).length;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen(true);
+        setCommandQuery("");
+      }
+      if (macDesktop && e.metaKey && e.key === ",") {
+        e.preventDefault();
+        router.push("/settings");
+      }
+      if (e.key === "Escape") closeMenus();
+    }
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node | null;
+      if (target && headerRef.current?.contains(target)) return;
+      closeMenus();
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [macDesktop, router]);
 
-  const filteredCommands = COMMAND_LINKS.filter((c) =>
-    c.label.toLowerCase().includes(commandQuery.trim().toLowerCase())
-  );
+  const displayName = session?.name || "Guest";
+  const workspace =
+    workspaces.find((row) => row.current)?.name || session?.workspace || "CueAI";
+  const unread = notifs.filter((n) => !readIds.includes(n.id)).length;
+  const q = commandQuery.trim().toLowerCase();
+  const filteredCommands = COMMAND_LINKS.filter((c) => !q || c.label.toLowerCase().includes(q));
+  const filteredMeetings = meetingHits.filter((m) => !q || m.title.toLowerCase().includes(q));
+
+  function persistRead(ids: string[]) {
+    setReadIds(ids);
+    if (session?.userId) {
+      localStorage.setItem(`cueai-notif-read:${session.userId}`, JSON.stringify(ids));
+    }
+  }
 
   async function handleLogout() {
+    closeMenus();
+    try {
+      await getDesktop()?.hideCompanion?.();
+    } catch {
+      /* companion may already be closed */
+    }
     await logout();
-    setProfileOpen(false);
-    router.push("/");
-  }
-
-  async function handleCompanion() {
-    await toggleCompanionOverlay();
-  }
-
-  function handleStartMeeting() {
-    router.push("/meetings/live");
+    router.push(withDesktopParam("/login"));
   }
 
   function closeMenus() {
@@ -109,13 +230,36 @@ export function Topbar() {
     setWorkspaceOpen(false);
   }
 
+  async function selectWorkspace(id: string) {
+    try {
+      const res = await fetch("/api/workspaces", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId: id }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setWorkspaceError(data.error || "Unable to switch workspace.");
+        return;
+      }
+      setWorkspaces((rows) => rows.map((row) => ({ ...row, current: row.id === id })));
+      setWorkspaceOpen(false);
+      router.refresh();
+    } catch {
+      setWorkspaceError("Unable to switch workspace.");
+    }
+  }
+
   return (
     <header
+      ref={headerRef}
       className={cn(
         "mac-toolbar sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--background)]/80 px-4 backdrop-blur-xl sm:px-6"
       )}
+      style={macDesktop ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
     >
-      <div className="relative hidden md:block not-mac">
+      <div className="relative hidden md:block">
         <button
           type="button"
           onClick={() => {
@@ -125,38 +269,38 @@ export function Topbar() {
           }}
           className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-3 py-1.5 text-sm transition hover:border-[var(--border-strong)]"
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-md bg-foreground text-[10px] font-bold text-[var(--background)]">
-            {initial}
-          </span>
           <span className="max-w-[140px] truncate font-medium">{workspace}</span>
           <ChevronDown className="h-3.5 w-3.5 text-subtle" />
         </button>
         {workspaceOpen && (
-          <div className="absolute left-0 top-11 w-56 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
+          <div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
             <p className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-subtle">
               Workspace
             </p>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-foreground"
-              onClick={() => setWorkspaceOpen(false)}
-            >
-              <Check className="h-3.5 w-3.5 text-foreground" />
-              {workspace}
-            </button>
+            {workspaceError && (
+              <p className="px-3 py-2 text-sm text-[var(--cue-danger)]">{workspaceError}</p>
+            )}
+            {workspaces.length === 0 && !workspaceError ? (
+              <p className="px-3 py-3 text-sm text-muted">No workspace yet.</p>
+            ) : (
+              workspaces.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-foreground hover:bg-[var(--surface-hover)]"
+                  onClick={() => void selectWorkspace(row.id)}
+                >
+                  {row.current ? <Check className="h-3.5 w-3.5 text-foreground" /> : <span className="w-3.5" />}
+                  {row.name}
+                </button>
+              ))
+            )}
             <Link
               href="/settings"
               className="mt-1 block rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
               onClick={() => setWorkspaceOpen(false)}
             >
               Workspace settings
-            </Link>
-            <Link
-              href="/dashboard"
-              className="block rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
-              onClick={() => setWorkspaceOpen(false)}
-            >
-              Dashboard
             </Link>
           </div>
         )}
@@ -171,6 +315,7 @@ export function Topbar() {
           setCommandQuery("");
         }}
         className="mac-toolbar-search group flex h-9 max-w-md flex-1 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-3 text-sm text-subtle transition hover:border-[var(--border-strong)]"
+        style={macDesktop ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
       >
         <Search className="h-4 w-4" />
         <span className="flex-1 text-left">Search meetings, docs, answers…</span>
@@ -179,30 +324,15 @@ export function Topbar() {
         </kbd>
       </button>
 
-      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-        <Button
-          size="sm"
-          variant="primary"
-          className="inline-flex"
-          onClick={handleStartMeeting}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span className="mac-only">New Meeting</span>
-          <span className="not-mac">Start Meeting</span>
-        </Button>
-
+      <div
+        className="ml-auto flex items-center gap-1.5 sm:gap-2"
+        style={macDesktop ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
+      >
         <button
           type="button"
-          className="mac-only mac-hud-btn"
-          onClick={() => void handleCompanion()}
-        >
-          HUD
-        </button>
-
-        <button
           onClick={toggleTheme}
           className="flex h-9 w-9 items-center justify-center rounded-xl text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
-          aria-label="Toggle theme"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           suppressHydrationWarning
         >
           <span suppressHydrationWarning>
@@ -212,6 +342,7 @@ export function Topbar() {
 
         <div className="relative">
           <button
+            type="button"
             onClick={() => {
               setNotifOpen((o) => !o);
               setProfileOpen(false);
@@ -226,7 +357,7 @@ export function Topbar() {
             )}
           </button>
           {notifOpen && (
-            <div className="absolute right-0 top-11 w-80 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
+            <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
               <div className="flex items-center justify-between px-2 py-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-subtle">
                   Notifications
@@ -235,33 +366,33 @@ export function Topbar() {
                   <button
                     type="button"
                     className="text-[11px] text-[var(--accent)] hover:underline"
-                    onClick={() => {
-                      setReadIds(notifs.map((n) => n.id));
-                      setNotifs([]);
-                    }}
+                    onClick={() => persistRead(notifs.map((n) => n.id))}
                   >
-                    Clear all
+                    Mark all read
                   </button>
                 )}
               </div>
-              {notifs.length === 0 ? (
-                <p className="px-3 py-4 text-center text-sm text-muted">You&apos;re all caught up</p>
+              {notifError ? (
+                <p className="px-3 py-4 text-center text-sm text-muted">{notifError}</p>
+              ) : notifs.length === 0 ? (
+                <p className="px-3 py-4 text-center text-sm text-muted">No new notifications</p>
               ) : (
                 notifs.map((n) => (
                   <button
                     key={n.id}
                     type="button"
                     className={cn(
-                      "flex w-full rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)] hover:text-foreground",
-                      readIds.includes(n.id) ? "text-subtle" : "text-muted"
+                      "flex w-full flex-col rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)] hover:text-foreground",
+                      readIds.includes(n.id) ? "text-subtle" : "text-foreground"
                     )}
                     onClick={() => {
-                      setReadIds((ids) => (ids.includes(n.id) ? ids : [...ids, n.id]));
+                      persistRead(readIds.includes(n.id) ? readIds : [...readIds, n.id]);
                       setNotifOpen(false);
                       router.push(n.href);
                     }}
                   >
-                    {n.text}
+                    <span>{n.title}</span>
+                    {n.body ? <span className="text-xs text-muted">{n.body}</span> : null}
                   </button>
                 ))
               )}
@@ -277,9 +408,7 @@ export function Topbar() {
               setNotifOpen(false);
               setWorkspaceOpen(false);
             }}
-            className={cn(
-              "flex items-center gap-2 rounded-xl py-1 pl-1 pr-2 transition hover:bg-[var(--surface-hover)]"
-            )}
+            className="flex items-center gap-2 rounded-xl py-1 pl-1 pr-2 transition hover:bg-[var(--surface-hover)]"
           >
             <Avatar name={displayName} size="sm" />
             <span className="hidden max-w-[120px] truncate text-sm font-medium lg:inline">
@@ -287,24 +416,56 @@ export function Topbar() {
             </span>
           </button>
           {profileOpen && (
-            <div className="absolute right-0 top-11 w-56 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
+            <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-[var(--border)] bg-[var(--surface-solid)] p-2 shadow-[var(--shadow-lg)]">
               {session ? (
                 <>
                   <div className="border-b border-[var(--border)] px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-subtle">Account</p>
                     <p className="truncate text-sm font-medium">{session.name}</p>
                     <p className="truncate text-xs text-subtle">{session.email}</p>
+                    {session.role ? (
+                      <p className="truncate text-xs text-muted">{session.role}</p>
+                    ) : null}
                   </div>
                   <Link
                     href="/settings"
-                    className="mt-1 block rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
+                    className="mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
                     onClick={() => setProfileOpen(false)}
                   >
+                    <User className="h-3.5 w-3.5" />
+                    Profile
+                  </Link>
+                  <Link
+                    href="/settings"
+                    className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
+                    onClick={() => setProfileOpen(false)}
+                  >
+                    <Settings className="h-3.5 w-3.5" />
                     Settings
                   </Link>
                   <button
                     type="button"
-                    onClick={handleLogout}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-red-400 transition hover:bg-red-500/10"
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
+                    onClick={() => {
+                      toggleTheme();
+                      setProfileOpen(false);
+                    }}
+                  >
+                    <Palette className="h-3.5 w-3.5" />
+                    {theme === "dark" ? "Switch to light" : "Switch to dark"}
+                  </button>
+                  <Link
+                    href="/settings"
+                    className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
+                    onClick={() => setProfileOpen(false)}
+                  >
+                    <Shield className="h-3.5 w-3.5" />
+                    Device & Security
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout()}
+                    className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-[var(--cue-danger)] transition hover:bg-red-500/10"
                   >
                     <LogOut className="h-3.5 w-3.5" />
                     Log out
@@ -313,14 +474,14 @@ export function Topbar() {
               ) : (
                 <>
                   <Link
-                    href="/signup"
+                    href={withDesktopParam("/signup")}
                     className="block rounded-xl px-3 py-2 text-sm font-medium text-[var(--accent)] transition hover:bg-[var(--surface-hover)]"
                     onClick={() => setProfileOpen(false)}
                   >
                     Create account
                   </Link>
                   <Link
-                    href="/login"
+                    href={withDesktopParam("/login")}
                     className="block rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-[var(--surface-hover)] hover:text-foreground"
                     onClick={() => setProfileOpen(false)}
                   >
@@ -353,7 +514,7 @@ export function Topbar() {
                   ref={commandInputRef}
                   value={commandQuery}
                   onChange={(e) => setCommandQuery(e.target.value)}
-                  placeholder="Jump to…"
+                  placeholder="Search meetings, docs, answers…"
                   className={macDesktop ? "" : "h-12 flex-1 bg-transparent text-sm outline-none"}
                 />
                 <kbd className="rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-subtle">
@@ -361,38 +522,43 @@ export function Topbar() {
                 </kbd>
               </div>
               <div className="max-h-72 overflow-y-auto p-2">
-                {filteredCommands.length === 0 ? (
-                  <p className="px-3 py-6 text-center text-sm text-muted">No matches</p>
+                {filteredCommands.length === 0 && filteredMeetings.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-sm text-muted">No results found.</p>
                 ) : (
-                  filteredCommands.map((item) => {
-                    const Icon = item.icon;
-                    return (
+                  <>
+                    {filteredMeetings.map((meeting) => (
                       <button
-                        key={item.href}
+                        key={meeting.id}
                         type="button"
                         className={macDesktop ? "mac-spotlight-row" : "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"}
                         onClick={() => {
                           setCommandOpen(false);
-                          router.push(item.href);
+                          router.push(`/meetings/${meeting.id}/summary`);
                         }}
                       >
-                        <Icon className="h-4 w-4 text-subtle" />
-                        {item.label}
+                        <FileText className="h-4 w-4 text-subtle" />
+                        {meeting.title}
                       </button>
-                    );
-                  })
+                    ))}
+                    {filteredCommands.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.href}
+                          type="button"
+                          className={macDesktop ? "mac-spotlight-row" : "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"}
+                          onClick={() => {
+                            setCommandOpen(false);
+                            router.push(item.href);
+                          }}
+                        >
+                          <Icon className="h-4 w-4 text-subtle" />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </>
                 )}
-                <button
-                  type="button"
-                  className={macDesktop ? "mac-spotlight-row" : "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-[var(--surface-hover)]"}
-                  onClick={() => {
-                    setCommandOpen(false);
-                    void handleCompanion();
-                  }}
-                >
-                  <Command className="h-4 w-4 text-subtle" />
-                  {desktopReady ? "Toggle meeting HUD" : "Open companion (Desktop if available)"}
-                </button>
               </div>
             </div>
           </div>,

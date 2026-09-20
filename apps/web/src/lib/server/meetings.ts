@@ -30,9 +30,20 @@ export async function listMeetings() {
   return (store.meetings || []).slice().sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
+export async function listMeetingsForUser(userId: string) {
+  const all = await listMeetings();
+  return all.filter((m) => m.userId === userId);
+}
+
 export async function getMeeting(id: string) {
   const store = await readStore();
   return (store.meetings || []).find((m) => m.id === id) || null;
+}
+
+export async function getMeetingForUser(id: string, userId: string) {
+  const meeting = await getMeeting(id);
+  if (!meeting || meeting.userId !== userId) return null;
+  return meeting;
 }
 
 export async function getActiveMeeting() {

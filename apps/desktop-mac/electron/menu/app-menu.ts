@@ -1,83 +1,132 @@
-import { Menu, app, BrowserWindow, shell } from "electron";
-import { showCompanion, toggleCompanion, hideCompanion } from "../windows/companion-window";
+import { Menu, app, BrowserWindow } from "electron";
+import { hideCompanion, showCompanion, toggleCompanion } from "../windows/companion-window";
+import { openMacOSPrivacySettings } from "../platform/macos";
 
 export function installMacAppMenu(getMainWindow: () => BrowserWindow | null) {
   const isMac = process.platform === "darwin";
+
+  function showMain(path?: string) {
+    const win = getMainWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    if (path) win.webContents.send("navigate", path);
+  }
+
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? [
           {
             label: app.name,
             submenu: [
-              { role: "about" as const },
+              { role: "about" as const, label: "About CueAI" },
               { type: "separator" as const },
               {
-                label: "Preferences…",
+                label: "Settings…",
                 accelerator: "Command+,",
+                click: () => showMain("/settings"),
+              },
+              {
+                label: "Permissions…",
                 click: () => {
-                  const win = getMainWindow();
-                  win?.show();
-                  win?.webContents.send("navigate", "/settings");
+                  showMain("/settings");
+                  void openMacOSPrivacySettings("privacy");
                 },
               },
               { type: "separator" as const },
-              { role: "hide" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const, label: "Hide CueAI" },
               { role: "hideOthers" as const },
               { role: "unhide" as const },
               { type: "separator" as const },
-              { role: "quit" as const },
+              { role: "quit" as const, label: "Quit CueAI" },
             ],
           },
         ]
       : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Live Session",
+          accelerator: "CommandOrControl+Shift+M",
+          click: () => showMain("/meetings/live"),
+        },
+        { type: "separator" },
+        {
+          label: "Close Window",
+          accelerator: "CommandOrControl+W",
+          click: () => {
+            const focused = BrowserWindow.getFocusedWindow();
+            const main = getMainWindow();
+            if (focused && focused !== main) {
+              focused.hide();
+              return;
+            }
+            main?.hide();
+          },
+        },
+      ],
+    },
     { role: "editMenu" },
     {
       label: "View",
       submenu: [
         {
-          label: "Show Companion",
+          label: "Show Desktop Companion",
           accelerator: "CommandOrControl+Shift+Space",
-          click: () => toggleCompanion(),
+          click: () => void toggleCompanion(),
         },
         {
-          label: "Hide Companion",
+          label: "Hide Desktop Companion",
           accelerator: "CommandOrControl+Shift+H",
-          click: () => hideCompanion(),
+          click: () => void hideCompanion(),
+        },
+        { type: "separator" },
+        {
+          label: "Command Palette",
+          accelerator: "CommandOrControl+K",
+          click: () => {
+            const win = getMainWindow();
+            win?.show();
+            win?.focus();
+            win?.webContents.send("shortcut", "command-palette");
+          },
         },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
     },
     {
-      label: "Session",
+      label: "Window",
       submenu: [
+        { role: "minimize", accelerator: "Command+M" },
+        { role: "zoom" },
+        { type: "separator" },
         {
-          label: "Start Meeting",
-          accelerator: "CommandOrControl+Shift+M",
-          click: () => {
-            const win = getMainWindow();
-            win?.show();
-            win?.webContents.send("navigate", "/meetings/live");
-          },
+          label: "CueAI",
+          click: () => showMain(),
         },
         {
-          label: "Open Dashboard",
-          click: () => {
-            const win = getMainWindow();
-            win?.show();
-            win?.webContents.send("navigate", "/dashboard");
-            showCompanion();
-          },
+          label: "Desktop Companion",
+          click: () => void showCompanion(),
         },
+        { type: "separator" },
+        { role: "front" },
       ],
     },
-    { role: "windowMenu" },
     {
       role: "help",
       submenu: [
         {
-          label: "CueAI on the web",
-          click: () => void shell.openExternal("https://github.com/indrakiran7b/CueAI"),
+          label: "Open Dashboard",
+          click: () => showMain("/dashboard"),
+        },
+        {
+          label: "Open Settings",
+          click: () => showMain("/settings"),
         },
       ],
     },

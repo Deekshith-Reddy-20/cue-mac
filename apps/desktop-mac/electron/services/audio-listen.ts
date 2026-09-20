@@ -1,4 +1,5 @@
-import { desktopCapturer, session } from "electron";
+import { session } from "electron";
+import { macOSSystemAudio } from "../platform/macos";
 
 export type ListenSources = {
   mic: boolean;
@@ -12,7 +13,6 @@ export function registerMediaPermissionHandler() {
       permission === "media" ||
       permission === "mediaKeySystem" ||
       permission === "display-capture" ||
-      // Electron/Chromium variants
       (permission as string) === "audioCapture" ||
       (permission as string) === "microphone";
     callback(ok);
@@ -30,17 +30,10 @@ export function registerMediaPermissionHandler() {
   });
 }
 
-/** Primary screen/desktop source id for system-audio loopback capture. */
+/** macOS desktop source id for system-audio capture. Null when unauthorized. */
 export async function getDesktopAudioSourceId(): Promise<string | null> {
-  const screens = await desktopCapturer.getSources({
-    types: ["screen"],
-    thumbnailSize: { width: 1, height: 1 },
-  });
-  if (screens[0]?.id) return screens[0].id;
-
-  const windows = await desktopCapturer.getSources({
-    types: ["window"],
-    thumbnailSize: { width: 1, height: 1 },
-  });
-  return windows[0]?.id ?? null;
+  if (process.platform === "darwin") {
+    return macOSSystemAudio.getDesktopAudioSourceId();
+  }
+  return null;
 }

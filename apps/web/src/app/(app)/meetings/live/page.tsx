@@ -13,11 +13,9 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { aiAnswers, transcript } from "@/lib/mock-data";
 import { CompanionAI } from "@/components/companion/companion-services";
 import { cn } from "@/lib/utils";
 import {
-  getDesktop,
   hideCompanionOverlay,
   isDesktopApp,
   openCompanionOverlay,
@@ -33,7 +31,13 @@ import {
 import Link from "next/link";
 import "./live-session.css";
 
-type Suggestion = (typeof aiAnswers)[number] & { regenerating?: boolean };
+type Suggestion = {
+  id: string;
+  question: string;
+  answer: string;
+  pinned: boolean;
+  regenerating?: boolean;
+};
 
 export default function LiveMeetingPage() {
   const [session, setSession] = useState<LiveSessionConfig | null>(null);
@@ -176,21 +180,21 @@ function ActiveLiveSession({
   const title = sessionTitle(config);
   const [paused, setPaused] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [lines, setLines] = useState<typeof transcript>([]);
+  const [lines, setLines] = useState<
+    { id: number; speaker: string; role: string; text: string; time: string; confidence: number }[]
+  >([]);
   const [sharing, setSharing] = useState(false);
   const [cueAiMode, setCueAiMode] = useState<CueAiMode>(config.startMode);
   const [cueAiProcessing, setCueAiProcessing] = useState<CueAiProcessing>("initializing");
   const [desktopReady, setDesktopReady] = useState(false);
-  const [bookmarkCount, setBookmarkCount] = useState(1);
-  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([2]);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>(() =>
-    aiAnswers.map((a) => ({ ...a }))
-  );
+  const [bookmarkCount, setBookmarkCount] = useState(0);
+  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [ask, setAsk] = useState("");
   const [asking, setAsking] = useState(false);
   const [askReply, setAskReply] = useState<string | null>(null);
   const [askNotice, setAskNotice] = useState<string | null>(null);
-  const [playheadPct, setPlayheadPct] = useState(62);
+  const [playheadPct, setPlayheadPct] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const cueAiModeRef = useRef<CueAiMode>("private");
 
@@ -244,38 +248,6 @@ function ActiveLiveSession({
     const t = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [paused]);
-
-  // Transcript / AI simulation only in CueAI Live after initialization.
-  useEffect(() => {
-    if (cueAiMode !== "live" || cueAiProcessing !== "listening" || paused) return;
-
-    if (lines.length === 0) {
-      setLines(transcript);
-    }
-
-    const extra = [
-      "We should confirm SSO requirements with Security before Phase 3.",
-      "Knowledge base citations need to show source titles in the Companion.",
-      "Let's bookmark this decision for the summary.",
-    ];
-    let i = 0;
-    const t = setInterval(() => {
-      const text = extra[i % extra.length];
-      i += 1;
-      setLines((prev) => [
-        ...prev,
-        {
-          id: prev.length + 1,
-          speaker: i % 2 === 0 ? "Priya Nair" : "Marcus Lee",
-          role: i % 2 === 0 ? "PM" : "Eng",
-          text,
-          time: formatTime(seconds + i),
-          confidence: 0.93 + (i % 5) * 0.01,
-        },
-      ]);
-    }, 5000);
-    return () => clearInterval(t);
-  }, [cueAiMode, cueAiProcessing, paused, seconds, lines.length]);
 
   useEffect(() => {
     if (cueAiMode === "inactive") {
@@ -529,6 +501,15 @@ function ActiveLiveSession({
                 )}
               </div>
             )}
+            {cueAiMode === "live" && lines.length === 0 && (
+              <div className="ls-empty">
+                <p className="text-sm font-medium">No transcript yet</p>
+                <p className="max-w-sm text-xs text-muted">
+                  Spoken audio from the companion will appear here. CueAI does not invent meeting
+                  dialogue.
+                </p>
+              </div>
+            )}
             {cueAiMode === "live" &&
               lines.map((line) => (
                 <div
@@ -663,6 +644,11 @@ function ActiveLiveSession({
                 )}
               </div>
             )}
+            {cueAiMode === "live" &&
+              cueAiProcessing === "listening" &&
+              suggestions.length === 0 && (
+                <p className="px-1 py-6 text-sm text-muted">No AI answers yet.</p>
+              )}
             {cueAiMode === "live" &&
               cueAiProcessing === "listening" &&
               suggestions.map((a) => (

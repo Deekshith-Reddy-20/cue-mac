@@ -113,16 +113,16 @@ export function humanizeFetchError(err: unknown): string {
   if (!(err instanceof Error)) return "Audio service unavailable.";
   const m = err.message.toLowerCase();
   if (m.includes("failed to fetch") || m.includes("networkerror")) {
-    return "Cannot reach CueAI web API. Start npm run dev:web (port 3000) and keep dev:desktop running.";
+    return "Cannot reach CueAI web API. Keep the CueAI web server running and restart CueAI Desktop.";
   }
-  if (m.includes("permission") || m.includes("notallowed")) {
-    return "Microphone permission is required.";
+  if (m.includes("permission") || m.includes("notallowed") || m.includes("not allowed")) {
+    return "macOS blocked this audio source. Enable CueAI in System Settings → Privacy & Security.";
   }
   if (m.includes("not found") || m.includes("device")) {
     return "No microphone is available.";
   }
-  if (m.includes("system audio")) {
-    return "System audio capture is unavailable on this device.";
+  if (m.includes("system audio") || m.includes("screen recording")) {
+    return err.message;
   }
   return err.message;
 }

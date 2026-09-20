@@ -156,12 +156,12 @@ export function Sidebar() {
             return (
               <div key={section.title} className="mac-nav-section">
                 <p>{section.title}</p>
-                {sectionItems.map((item) => renderLink(item, true))}
+                {sectionItems.map((item) => renderLink(item))}
               </div>
             );
           })}
         </div>
-        <div className="not-mac space-y-0.5">{items.map(renderLink)}</div>
+        <div className="not-mac space-y-0.5">{items.map((item) => renderLink(item))}</div>
       </nav>
     </aside>
   );

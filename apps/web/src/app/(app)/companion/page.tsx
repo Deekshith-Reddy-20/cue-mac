@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { MacGlassButton, MacSegmentedControl } from "@/components/mac";
 import {
   Monitor,
   Sparkles,
@@ -20,7 +21,9 @@ import {
 import {
   DESKTOP_BRIDGE_URL,
   DESKTOP_PROTOCOL_COMPANION,
+  getDesktop,
   isDesktopAvailable,
+  isMacDesktopApp,
   openCompanionOverlay,
   tryLaunchDesktopApp,
   type CompanionOpenResult,
@@ -42,7 +45,7 @@ const features = [
   {
     icon: Volume2,
     title: "System audio listening",
-    desc: "Capture meeting/app playback via Windows loopback so CueAI can hear what others say on screen.",
+    desc: "Capture meeting playback through the platform audio service — Windows loopback on Windows, Screen Recording audio on macOS.",
   },
   {
     icon: Camera,
@@ -67,7 +70,7 @@ const features = [
   {
     icon: Keyboard,
     title: "Global hotkey",
-    desc: "Toggle with Ctrl+Shift+Space / Ctrl+Shift+C without leaving your meeting.",
+    desc: "Toggle with ⌘⇧Space on Mac or Ctrl+Shift+Space on Windows without leaving your meeting.",
   },
   {
     icon: Sparkles,
@@ -82,11 +85,30 @@ export default function CompanionPage() {
   const [desktopReady, setDesktopReady] = useState<boolean | null>(null);
   const [overlayVisible, setOverlayVisible] = useState<boolean | null>(null);
   const [lastResult, setLastResult] = useState<CompanionOpenResult | null>(null);
+  const [mac, setMac] = useState(false);
+  const [view, setView] = useState<"overlay" | "capabilities">("overlay");
+
+  useEffect(() => {
+    setMac(isMacDesktopApp());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function refreshStatus() {
+      const desktop = getDesktop();
+      if (desktop) {
+        try {
+          const status = await desktop.getStatus();
+          if (cancelled) return;
+          setDesktopReady(true);
+          setOverlayVisible(Boolean(status.companionVisible));
+        } catch {
+          if (!cancelled) setDesktopReady(false);
+        }
+        return;
+      }
+
       const ok = await isDesktopAvailable();
       if (cancelled) return;
       setDesktopReady(ok);
@@ -124,13 +146,22 @@ export default function CompanionPage() {
 
   async function tryOpenOverlay() {
     setOpening(true);
-    const result = await openCompanionOverlay();
-    setLastResult(result);
-    if (result.mode === "native") {
-      setDesktopReady(true);
-      setOverlayVisible(result.issue ? false : true);
+    try {
+      const result = await openCompanionOverlay();
+      setLastResult(result);
+      if (result.mode === "native") {
+        setDesktopReady(true);
+        setOverlayVisible(result.issue ? false : true);
+      }
+    } catch (err) {
+      setLastResult({
+        mode: "native",
+        issue: "load_error",
+        loadError: err instanceof Error ? err.message : "Could not open the overlay.",
+      });
+    } finally {
+      setOpening(false);
     }
-    setOpening(false);
   }
 
   function tryDeepLink() {
@@ -157,24 +188,37 @@ export default function CompanionPage() {
         </p>
       </div>
 
-      <Card glow className="space-y-4">
+      {mac && (
+        <MacSegmentedControl
+          value={view}
+          onChange={setView}
+          segments={[
+            { id: "overlay", label: "Overlay" },
+            { id: "capabilities", label: "Capabilities" },
+          ]}
+        />
+      )}
+
+      <Card glow className={mac ? "mac-glass-card space-y-4 border-0 bg-transparent shadow-none" : "space-y-4"}>
         <CardHeader>
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl btn-gradient text-white">
             <Monitor className="h-5 w-5" />
           </div>
           <div>
             <CardTitle>
-              {desktopReady
-                ? overlayVisible
-                  ? "Desktop Companion running · overlay visible"
-                  : "Desktop Companion running"
-                : "Install / open CueAI Desktop"}
+              {overlayVisible
+                ? "Desktop Companion running · overlay visible"
+                : lastResult?.issue
+                  ? "Overlay failed to open."
+                  : desktopReady
+                    ? "CueAI Desktop is connected"
+                    : "Install / open CueAI Desktop"}
             </CardTitle>
             <CardDescription>
               {desktopReady
                 ? overlayVisible
-                  ? "Native overlay is on screen. Use Ctrl+Shift+Space to hide or show it."
-                  : "Open the native system-wide overlay (same window as Ctrl+Shift+Space)."
+                  ? "Native overlay is on screen. Use ⌘⇧Space or Ctrl+Shift+Space to hide or show it."
+                  : "Open the native system-wide overlay (same window as ⌘⇧Space / Ctrl+Shift+Space)."
                 : "Start Desktop so the Companion can float above meetings and stay hidden from capture."}
             </CardDescription>
           </div>
@@ -204,7 +248,7 @@ export default function CompanionPage() {
           <p className="text-xs text-muted">
             Native overlay is always-on-top, excluded from capture when Privacy is on,
             and stays up after you close this website — dismiss only with End Session or
-            Close (X).
+            Hide.
           </p>
         )}
 
@@ -224,8 +268,8 @@ export default function CompanionPage() {
 
         {lastResult?.mode === "launching" && (
           <p className="text-xs text-muted">
-            Asked Windows to open CueAI via <code className="text-foreground">{DESKTOP_PROTOCOL_COMPANION}</code>.
-            If nothing appears, start Desktop with <code className="text-foreground">npm run dev:desktop</code>.
+            Asked the OS to open CueAI via <code className="text-foreground">{DESKTOP_PROTOCOL_COMPANION}</code>.
+            If nothing appears, start Desktop with <code className="text-foreground">npm run dev:mac</code> or <code className="text-foreground">npm run dev:desktop</code>.
           </p>
         )}
 
@@ -240,10 +284,8 @@ export default function CompanionPage() {
 
         {lastResult?.mode === "native" && lastResult.issue === "load_error" && (
           <p className="rounded-xl border border-[var(--border)] bg-[var(--primary-muted)] px-3 py-2 text-xs text-muted">
-            Desktop opened the overlay window but the companion UI failed to load
-            {lastResult.loadError ? `: ${lastResult.loadError}` : ""}. Keep{" "}
-            <code className="text-foreground">npm run dev:desktop</code> running in a terminal,
-            then click Open overlay again.
+            Overlay failed to open
+            {lastResult.loadError ? `: ${lastResult.loadError}` : "."} Keep CueAI Desktop running, then try again.
           </p>
         )}
 
@@ -265,17 +307,36 @@ export default function CompanionPage() {
         )}
 
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="gradient"
-            disabled={opening}
-            onClick={() => void tryOpenOverlay()}
-          >
-            {opening
-              ? "Opening…"
-              : desktopReady
-                ? "Open system-wide overlay"
-                : "Try open / launch Desktop"}
-          </Button>
+          {mac ? (
+            <MacGlassButton
+              accent
+              loading={opening}
+              loadingLabel="Opening overlay..."
+              disabled={opening}
+              icon={<Layers className="h-4 w-4" />}
+              onClick={() => void tryOpenOverlay()}
+            >
+              {lastResult?.issue
+                ? "Try Again"
+                : overlayVisible
+                  ? "Overlay Open"
+                  : desktopReady
+                    ? "Open system-wide overlay"
+                    : "Try open / launch Desktop"}
+            </MacGlassButton>
+          ) : (
+            <Button
+              variant="gradient"
+              disabled={opening}
+              onClick={() => void tryOpenOverlay()}
+            >
+              {opening
+                ? "Opening…"
+                : desktopReady
+                  ? "Open system-wide overlay"
+                  : "Try open / launch Desktop"}
+            </Button>
+          )}
           {!desktopReady && (
             <>
               <Button variant="outline" onClick={() => void copyLaunch()}>
@@ -286,14 +347,25 @@ export default function CompanionPage() {
               </Button>
             </>
           )}
-          <Button href="/dashboard" variant="outline">
-            Back to dashboard
-            <ArrowUpRight className="h-4 w-4" />
-          </Button>
+          {mac ? (
+            <MacGlassButton
+              icon={<ArrowUpRight className="h-4 w-4" />}
+              onClick={() => {
+                window.location.href = "/dashboard";
+              }}
+            >
+              Back to dashboard
+            </MacGlassButton>
+          ) : (
+            <Button href="/dashboard" variant="outline">
+              Back to dashboard
+              <ArrowUpRight className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${mac && view === "overlay" ? "opacity-80" : ""}`}>
         {features.map((f) => (
           <Card key={f.title} className="p-4">
             <f.icon className="mb-3 h-5 w-5 text-primary" />

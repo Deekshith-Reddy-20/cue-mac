@@ -1,9 +1,9 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, type Variants } from "framer-motion";
 import {
-  ArrowUpRight,
   FileText,
   Library,
   Monitor,
@@ -17,16 +17,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Progress } from "@/components/ui/misc";
-import {
-  activity,
-  recentMeetings,
-  stats,
-  usageSeries,
-} from "@/lib/mock-data";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useTheme } from "@/components/providers/theme-provider";
 import { greetingFor } from "@/lib/auth";
+import { formatDuration, formatMeetingWhen, type StoredMeeting } from "@/lib/meetings-client";
+import { getDesktop } from "@/lib/desktop";
 import "./dashboard.css";
 
 const fade: Variants = {
@@ -42,18 +37,14 @@ const fade: Variants = {
   }),
 };
 
-const resources = [
-  { label: "AI tokens", value: 68, hint: "340k / 500k" },
-  { label: "Storage", value: 42, hint: "8.4 GB / 20 GB" },
-  { label: "Desktop Companion", value: 91, hint: "Connected" },
-];
-
 const quickActions = [
   { href: "/resume", icon: FileText, label: "Tailor a resume" },
   { href: "/knowledge", icon: Library, label: "Upload to Knowledge" },
   { href: "/screen-context", icon: Monitor, label: "Enable Screen AI" },
   { href: "/translation", icon: Sparkles, label: "Start translation" },
 ];
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function DashboardPage() {
   const { session, ready } = useAuth();
@@ -71,9 +62,86 @@ export default function DashboardPage() {
     color: isLight ? "#090909" : "#ffffff",
   };
 
+  const [meetings, setMeetings] = useState<StoredMeeting[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [companionOn, setCompanionOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/meetings", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unable to load meetings.");
+        return res.json() as Promise<{ meetings?: StoredMeeting[] }>;
+      })
+      .then((data) => {
+        if (!active) return;
+        setMeetings(data.meetings || []);
+        setLoadError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setMeetings([]);
+        setLoadError("Unable to load meetings.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const desktop = getDesktop();
+    if (!desktop?.getStatus) return;
+    void desktop.getStatus().then((status) => setCompanionOn(Boolean(status.companionVisible)));
+  }, []);
+
+  const completed = useMemo(
+    () => meetings.filter((m) => m.status !== "live"),
+    [meetings],
+  );
+
+  const weekStart = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 6);
+    return d;
+  }, []);
+
+  const thisWeek = completed.filter((m) => new Date(m.startedAt).getTime() >= weekStart.getTime());
+  const answerCount = completed.reduce((sum, m) => sum + (m.answers?.length || 0), 0);
+  const hours = completed.reduce((sum, m) => sum + (m.durationSec || 0), 0) / 3600;
+
+  const stats = [
+    { label: "Meetings this week", value: String(thisWeek.length) },
+    { label: "AI answers", value: String(answerCount) },
+    { label: "Hours transcribed", value: hours ? hours.toFixed(1) : "0" },
+    {
+      label: "Desktop companion",
+      value: companionOn == null ? "—" : companionOn ? "Open" : "Idle",
+    },
+  ];
+
+  const usageSeries = useMemo(() => {
+    const buckets = new Map<string, { day: string; meetings: number; tokens: number }>();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      const key = d.toDateString();
+      buckets.set(key, { day: WEEKDAYS[d.getDay()], meetings: 0, tokens: 0 });
+    }
+    for (const meeting of thisWeek) {
+      const key = new Date(meeting.startedAt).toDateString();
+      const bucket = buckets.get(key);
+      if (!bucket) continue;
+      bucket.meetings += 1;
+      bucket.tokens += (meeting.answers?.length || 0) + (meeting.transcript?.length || 0);
+    }
+    return [...buckets.values()];
+  }, [thisWeek, weekStart]);
+
+  const hasUsage = usageSeries.some((d) => d.meetings > 0 || d.tokens > 0);
+
   return (
     <div data-dashboard>
-      {/* Hero strip */}
       <motion.header
         className="db-hero"
         custom={0}
@@ -88,12 +156,11 @@ export default function DashboardPage() {
           <p className="db-hero-sub">
             {session
               ? `${workspace} · signed in as ${session.email}`
-              : "Your AI copilot is ready. Sign up to personalize this workspace."}
+              : "Sign in to see your workspace."}
           </p>
         </div>
       </motion.header>
 
-      {/* Metrics row */}
       <div className="db-metrics">
         {stats.map((s, i) => (
           <motion.div
@@ -106,15 +173,10 @@ export default function DashboardPage() {
           >
             <p className="db-metric-label">{s.label}</p>
             <p className="db-metric-value">{s.value}</p>
-            <p className="db-metric-delta">
-              <ArrowUpRight className="mr-0.5 inline h-3 w-3" />
-              {s.delta}
-            </p>
           </motion.div>
         ))}
       </div>
 
-      {/* Main: chart + resources */}
       <div className="db-main">
         <motion.section
           className="db-panel"
@@ -125,37 +187,43 @@ export default function DashboardPage() {
         >
           <div className="db-panel-head">
             <div>
-              <h2 className="db-section-title">Weekly AI usage</h2>
-              <p className="db-section-sub">Meetings and token volume</p>
+              <h2 className="db-section-title">Weekly activity</h2>
+              <p className="db-section-sub">Completed meetings from this account</p>
             </div>
             <span className="db-chip">This week</span>
           </div>
           <div className="db-chart">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={usageSeries}>
-                <defs>
-                  <linearGradient id="usageFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0099ff" stopOpacity={0.32} />
-                    <stop offset="100%" stopColor="#0099ff" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="day"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: chartTick, fontSize: 12 }}
-                />
-                <YAxis hide />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Area
-                  type="monotone"
-                  dataKey="tokens"
-                  stroke={chartStroke}
-                  fill="url(#usageFill)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            {hasUsage ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={usageSeries}>
+                  <defs>
+                    <linearGradient id="usageFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0099ff" stopOpacity={0.32} />
+                      <stop offset="100%" stopColor="#0099ff" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis
+                    dataKey="day"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: chartTick, fontSize: 12 }}
+                  />
+                  <YAxis hide />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Area
+                    type="monotone"
+                    dataKey="meetings"
+                    stroke={chartStroke}
+                    fill="url(#usageFill)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="flex h-full items-center justify-center text-sm text-muted">
+                No activity yet.
+              </p>
+            )}
           </div>
         </motion.section>
 
@@ -167,30 +235,29 @@ export default function DashboardPage() {
           animate="show"
         >
           <div>
-            <h2 className="db-section-title">Resource usage</h2>
-            <p className="db-section-sub">Plan capacity this cycle</p>
+            <h2 className="db-section-title">Workspace</h2>
+            <p className="db-section-sub">Live values for this account</p>
           </div>
-          <div className="space-y-5">
-            {resources.map((u) => (
-              <div key={u.label}>
-                <div className="db-meter-row">
-                  <span className="db-meter-label">{u.label}</span>
-                  <span className="db-meter-hint">{u.hint}</span>
-                </div>
-                <Progress value={u.value} />
-              </div>
-            ))}
+          <div className="space-y-4 text-sm text-muted">
+            <p>
+              Completed meetings: <strong className="text-foreground">{completed.length}</strong>
+            </p>
+            <p>
+              Live sessions in progress:{" "}
+              <strong className="text-foreground">
+                {meetings.filter((m) => m.status === "live").length}
+              </strong>
+            </p>
+            <p>
+              Companion:{" "}
+              <strong className="text-foreground">
+                {companionOn == null ? "Not connected" : companionOn ? "Open" : "Idle"}
+              </strong>
+            </p>
           </div>
-          <p className="db-plan-note">
-            Pro plan renews Aug 28 ·{" "}
-            <Link href="/settings" className="db-link">
-              Manage billing
-            </Link>
-          </p>
         </motion.section>
       </div>
 
-      {/* Lower: meetings · actions · activity */}
       <div className="db-lower">
         <motion.section
           className="db-panel"
@@ -202,36 +269,38 @@ export default function DashboardPage() {
           <div className="db-panel-head">
             <div>
               <h2 className="db-section-title">Recent meetings</h2>
-              <p className="db-section-sub">Jump back into context</p>
+              <p className="db-section-sub">Completed history only</p>
             </div>
             <Link href="/meetings" className="db-link">
               View all
             </Link>
           </div>
           <div>
-            {recentMeetings.map((m) => (
-              <Link
-                key={m.id}
-                href={
-                  m.status === "live"
-                    ? "/meetings/live"
-                    : `/meetings/${m.id}/summary`
-                }
-                className="db-meeting"
-              >
+            {loadError && (
+              <p className="py-4 text-sm text-[var(--cue-danger)]" role="alert">
+                {loadError}{" "}
+                <button
+                  type="button"
+                  className="db-link"
+                  onClick={() => window.location.reload()}
+                >
+                  Try Again
+                </button>
+              </p>
+            )}
+            {!loadError && completed.length === 0 && (
+              <p className="py-6 text-sm text-muted">No meetings yet.</p>
+            )}
+            {completed.slice(0, 6).map((m) => (
+              <Link key={m.id} href={`/meetings/${m.id}/summary`} className="db-meeting">
                 <div>
                   <p className="db-meeting-title">{m.title}</p>
                   <p className="db-meeting-meta">
-                    {m.time} · {m.attendees} people
+                    {formatMeetingWhen(m.startedAt)}
+                    {m.attendees ? ` · ${m.attendees} people` : ""}
                   </p>
                 </div>
-                <div className="db-meeting-side">
-                  {m.status === "live" ? (
-                    <span className="db-live">Live</span>
-                  ) : (
-                    m.duration
-                  )}
-                </div>
+                <div className="db-meeting-side">{formatDuration(m.durationSec)}</div>
               </Link>
             ))}
           </div>
@@ -268,21 +337,7 @@ export default function DashboardPage() {
             <h2 className="db-section-title">Activity</h2>
           </div>
           <div className="db-activity">
-            {activity.map((a) => (
-              <div key={a.id} className="db-activity-item">
-                <span className="db-activity-dot" />
-                <div>
-                  <p className="db-activity-text">{a.text}</p>
-                  <p className="db-activity-time">{a.time}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="db-pin">
-            <p className="db-pin-label">Pinned answer</p>
-            <p className="db-pin-body">
-              Target p95 &lt; 800ms for suggestion cards during live sessions.
-            </p>
+            <p className="py-6 text-sm text-muted">No activity yet.</p>
           </div>
         </motion.section>
       </div>

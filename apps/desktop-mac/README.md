@@ -1,30 +1,39 @@
 # CueAI for Mac
 
-A separate macOS desktop app — not a restyle of the Windows overlay.
-
-Windows CueAI is a dark rectangular command bar plus a frameless web shell.
-This Mac build is a **workspace window** with traffic-light chrome and a **Control Center HUD** at the top-right of the screen.
+macOS desktop target for the existing CueAI application. Same backend, auth, meetings, AI pipeline, and data as Windows and web. Platform-specific code lives in `electron/platform/macos/`.
 
 ## Run
 
-From the repo root (web app still provides the workspace):
+From the repo root:
 
 ```bash
 npm run dev:web
-npm run dev:desktop:mac
+npm run dev:mac
 ```
 
-The HUD loads on `http://127.0.0.1:15175`. Toggle it with **⌘⇧Space** or **Show HUD** in the title bar. The workspace opens at `/dashboard?desktop=mac`.
+`npm run dev:desktop:mac` is the same command.
+
+The workspace starts at Login / Signup when you are signed out. The companion HUD loads on `http://127.0.0.1:15175`. Toggle it with **⌘⇧Space**.
 
 ## Package
 
-A `.dmg` can only be built **on a Mac** (or GitHub Actions `macos-latest`). Windows will refuse `npm run dist:desktop:mac` on purpose.
+A `.dmg` / `.app` can only be built on a Mac:
 
-## How it differs from Windows
+```bash
+npm run build:mac
+npm run dist:mac
+```
 
-| | Windows (`apps/desktop`) | Mac (`apps/desktop-mac`) |
-|---|---|---|
-| Workspace | Dark Framer shell, Windows caption buttons | Sand canvas, traffic lights, Spotlight jump palette |
-| Overlay | Dark 752×76 toolbar | 420×176 Control Center widget, top-right |
-| Window title | CueAI | Always CueAI (never Companion) |
-| Shortcuts | Ctrl+Shift+Space | ⌘⇧Space |
+electron-builder produces `CueAI.app` inside a `CueAI.dmg` (universal arm64 + x64 when practical).
+
+## Platform services
+
+| Concern | Implementation |
+|---|---|
+| Permissions | `electron/platform/macos/macosPermissions.ts` |
+| System audio | `MacOSSystemAudioService` — not Windows loopback |
+| Screen capture | `macosCapture.ts` — physical displays, CueAI windows hidden |
+| Overlay protection | `setOverlayCaptureProtection` → `setContentProtection` / NSWindowSharingNone |
+| Window chrome | hiddenInset traffic lights, HUD companion, Dock activate |
+
+Windows CueAI remains in `apps/desktop` and is unchanged.

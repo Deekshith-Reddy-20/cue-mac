@@ -8,9 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/misc";
-import { fetchMeeting } from "@/lib/meetings-client";
+import { fetchMeeting, type StoredMeeting } from "@/lib/meetings-client";
 import type { MeetingRecord } from "@/lib/meetings-catalog";
-import { listMeetings } from "@/lib/meetings-catalog";
 import { cn } from "@/lib/utils";
 
 const languages = [
@@ -63,6 +62,10 @@ function TranslationContent() {
   const [loading, setLoading] = useState(Boolean(meetingId));
   const [error, setError] = useState<string | null>(null);
 
+  const [list, setList] = useState<StoredMeeting[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listLoaded, setListLoaded] = useState(false);
+
   useEffect(() => {
     if (!meetingId) {
       setMeeting(null);
@@ -92,6 +95,32 @@ function TranslationContent() {
     };
   }, [meetingId]);
 
+  useEffect(() => {
+    if (meetingId) return;
+    let active = true;
+    void fetch("/api/meetings", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unable to load meetings.");
+        return res.json() as Promise<{ meetings?: StoredMeeting[] }>;
+      })
+      .then((data) => {
+        if (!active) return;
+        setList((data.meetings || []).filter((m) => m.status !== "live"));
+        setListError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setList([]);
+        setListError("Unable to load meetings.");
+      })
+      .finally(() => {
+        if (active) setListLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [meetingId]);
+
   const transcriptLines = useMemo(
     () => (meeting ? localizedLine(meeting, lang) : []),
     [meeting, lang]
@@ -113,7 +142,6 @@ function TranslationContent() {
   }
 
   if (!meetingId) {
-    const meetings = listMeetings();
     return (
       <div className="mx-auto max-w-5xl space-y-6 animate-fade-up">
         <div>
@@ -128,8 +156,19 @@ function TranslationContent() {
           <p className="mb-4 text-sm text-muted">
             No meeting is selected. Open Translation from a meeting summary, or pick a meeting below.
           </p>
+          {listError && (
+            <p className="text-sm text-[var(--cue-danger)]" role="alert">
+              {listError}{" "}
+              <button type="button" className="underline" onClick={() => window.location.reload()}>
+                Try Again
+              </button>
+            </p>
+          )}
+          {listLoaded && !listError && list.length === 0 && (
+            <p className="text-sm text-muted">No meetings yet.</p>
+          )}
           <ul className="space-y-2">
-            {meetings.map((m) => (
+            {list.map((m) => (
               <li key={m.id}>
                 <Link
                   href={`/translation?meetingId=${encodeURIComponent(m.id)}`}

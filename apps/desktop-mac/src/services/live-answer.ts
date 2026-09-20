@@ -13,7 +13,7 @@ export type LiveAnswer = {
   model: string;
 };
 
-let apiBase = "http://127.0.0.1:3000";
+let apiBase = "http://127.0.0.1:3002";
 
 export function configureAnswerApi(base: string) {
   if (base) apiBase = base.replace(/\/$/, "");
